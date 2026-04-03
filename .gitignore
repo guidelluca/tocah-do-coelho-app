@@ -1,0 +1,11 @@
+node_modules/
+backend/node_modules/
+.npm-cache/
+backend/.npm-cache/
+backups/
+.expo/
+.env
+backend/.env
+.env.*
+*.log
+.DS_Store
