@@ -5,7 +5,7 @@ import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
 import { useThemeMode } from '../context/ThemeContext';
 import { darkTheme, lightTheme } from '../constants/theme';
-import { addCaixinhaEntry, concluirTarefa, getCaixinha, getCaixinhaStatement, getDados, getFinanceSnapshot, getTarefaSemana } from '../services/api';
+import { addCaixinhaEntry, concluirTarefa, getCaixinha, getCaixinhaStatement, getFinanceSnapshot, getTarefaSemana } from '../services/api';
 import { AppHeader } from '../components/AppHeader';
 import { useResident } from '../context/ResidentContext';
 import { useNotifications } from '../context/NotificationContext';
@@ -100,10 +100,9 @@ export function HomeScreen() {
   const load = useCallback(async (mode = 'normal') => {
     if (mode === 'normal' || mode === 'pull') setRefreshing(true);
     try {
-      const [finRes, cxRes, dadosRes, tfRes] = await Promise.allSettled([
+      const [finRes, cxRes, tfRes] = await Promise.allSettled([
         getFinanceSnapshot(),
         getCaixinha(),
-        getDados(resident),
         getTarefaSemana(resident),
       ]);
 
@@ -115,18 +114,7 @@ export function HomeScreen() {
         const cx = cxRes.value || {};
         setCaixinha({ saldo: cx.saldo || '0,00' });
       }
-      if (dadosRes.status === 'fulfilled') {
-        const dados = dadosRes.value || {};
-        let aluguelResolved = dados.aluguel || '--';
-        if ((!aluguelResolved || aluguelResolved === '--') && finRes.status === 'fulfilled') {
-          const fin = finRes.value || {};
-          const residentRow = (fin.residents || []).find(
-            (r) => String(r?.nome || '').trim().toUpperCase() === String(resident || '').trim().toUpperCase()
-          );
-          aluguelResolved = residentRow?.total || residentRow?.aluguel || '--';
-        }
-        setMeuResumo({ aluguel: aluguelResolved, mesReferencia: dados.mesReferencia || '' });
-      } else if (finRes.status === 'fulfilled') {
+      if (finRes.status === 'fulfilled') {
         const fin = finRes.value || {};
         const residentRow = (fin.residents || []).find(
           (r) => String(r?.nome || '').trim().toUpperCase() === String(resident || '').trim().toUpperCase()
@@ -144,7 +132,6 @@ export function HomeScreen() {
       const hasError =
         finRes.status === 'rejected' ||
         cxRes.status === 'rejected' ||
-        dadosRes.status === 'rejected' ||
         tfRes.status === 'rejected';
       setError(
         hasError

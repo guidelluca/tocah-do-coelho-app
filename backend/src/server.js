@@ -25,7 +25,7 @@ const {
 const MONTHS_PT = ['JAN', 'FEV', 'MAR', 'ABR', 'MAI', 'JUN', 'JUL', 'AGO', 'SET', 'OUT', 'NOV', 'DEZ'];
 const RESIDENTS = ['ALLAN', 'RAMON', 'VITOR', 'GUSTAVO', 'GUILHERME'];
 const MAX_SHEET_CELL_CHARS = 45000;
-const READ_CACHE_TTL_MS = 20000;
+const READ_CACHE_TTL_MS = 120000;
 const readCache = new Map();
 
 function badRequest(res, message) {
@@ -171,11 +171,21 @@ async function readRange(range) {
   if (cached && cached.expiresAt > Date.now()) {
     return cached.values;
   }
-  const sheets = await getSheetsApi();
-  const res = await sheets.spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range });
-  const values = res.data.values || [];
-  readCache.set(cacheKey, { values, expiresAt: Date.now() + READ_CACHE_TTL_MS });
-  return values;
+  try {
+    const sheets = await getSheetsApi();
+    const res = await sheets.spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range });
+    const values = res.data.values || [];
+    readCache.set(cacheKey, { values, expiresAt: Date.now() + READ_CACHE_TTL_MS, updatedAt: Date.now() });
+    return values;
+  } catch (error) {
+    const msg = String(error?.message || '').toLowerCase();
+    const isQuotaError = msg.includes('quota exceeded') || msg.includes('rate limit') || msg.includes('too many requests');
+    if (isQuotaError && cached?.values) {
+      // Serve last successful snapshot to keep app stable during quota throttling.
+      return cached.values;
+    }
+    throw error;
+  }
 }
 
 async function appendRow(range, values) {
