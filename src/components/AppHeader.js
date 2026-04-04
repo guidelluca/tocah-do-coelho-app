@@ -17,15 +17,18 @@ export function AppHeader({ title = 'República Tocah', subtitle = '', onBellPre
   const { isDark, toggleTheme } = useThemeMode();
   const [logoSourceIdx, setLogoSourceIdx] = useState(0);
   const contextLine = subtitle || title;
+  const gradient = isDark ? ['#2a1d52', '#171225'] : ['#7a4bff', '#5c2dde'];
   return (
     <LinearGradient
-      colors={['#6a1b9a', '#4a148c']}
+      colors={gradient}
       start={{ x: 0, y: 0 }}
       end={{ x: 1, y: 1 }}
-      style={[styles.wrap, { paddingTop: Math.max(8, insets.top * 0.35), marginTop: 0 }]}
+      style={[styles.wrap, { paddingTop: Math.max(10, insets.top * 0.4), marginTop: 0 }]}
     >
+      <View style={styles.glowOrbTop} />
+      <View style={styles.glowOrbBottom} />
       <View style={styles.left}>
-        <View style={styles.logoWrap}>
+        <View style={styles.logoOuterRing}>
           {logoSourceIdx < TOCAH_LOGO_SOURCES.length ? (
             <Image
               source={TOCAH_LOGO_SOURCES[logoSourceIdx]}
@@ -40,6 +43,7 @@ export function AppHeader({ title = 'República Tocah', subtitle = '', onBellPre
           )}
         </View>
         <View style={{ flex: 1 }}>
+          <Text style={styles.overline}>Painel da Casa</Text>
           <Text style={styles.houseTitle} numberOfLines={2}>República Tocah do Coelho</Text>
           {!!contextLine && <Text style={styles.contextText} numberOfLines={1}>{contextLine}</Text>}
         </View>
@@ -63,55 +67,73 @@ export function AppHeader({ title = 'República Tocah', subtitle = '', onBellPre
 
 const styles = StyleSheet.create({
   wrap: {
-    marginHorizontal: 12,
-    marginTop: 8,
-    marginBottom: 8,
-    borderRadius: 24,
-    paddingHorizontal: 14,
-    paddingBottom: 10,
+    marginHorizontal: 14,
+    marginTop: 10,
+    marginBottom: 10,
+    borderRadius: 26,
+    paddingHorizontal: 16,
+    paddingBottom: 12,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    shadowColor: '#4a148c',
-    shadowOpacity: 0.25,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 8,
-  },
-  left: { flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1, paddingRight: 8 },
-  logoWrap: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
     overflow: 'hidden',
-    backgroundColor: '#fff',
-    alignItems: 'center',
-    justifyContent: 'center',
+    shadowColor: '#3f2d87',
+    shadowOpacity: 0.28,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 7 },
+    elevation: 9,
   },
-  logo: { width: '100%', height: '100%' },
-  logoFallback: { width: '100%', height: '100%', alignItems: 'center', justifyContent: 'center', backgroundColor: '#f3e8ff' },
-  houseTitle: { color: '#fff', fontSize: 20, lineHeight: 22, fontWeight: '900', letterSpacing: 0.1 },
-  contextText: { color: 'rgba(255,255,255,0.9)', fontSize: 13, marginTop: 2, fontWeight: '700' },
+  glowOrbTop: {
+    position: 'absolute',
+    top: -34,
+    right: -16,
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    backgroundColor: 'rgba(255,255,255,0.14)',
+  },
+  glowOrbBottom: {
+    position: 'absolute',
+    bottom: -50,
+    left: -34,
+    width: 140,
+    height: 140,
+    borderRadius: 70,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+  },
+  left: { flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1, paddingRight: 10 },
+  logoOuterRing: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    padding: 2,
+    backgroundColor: 'rgba(255,255,255,0.35)',
+  },
+  logo: { width: '100%', height: '100%', borderRadius: 26 },
+  logoFallback: { width: '100%', height: '100%', alignItems: 'center', justifyContent: 'center', backgroundColor: '#f3e8ff', borderRadius: 26 },
+  houseTitle: { color: '#fff', fontSize: 18, lineHeight: 20, fontWeight: '900', letterSpacing: 0.15 },
+  overline: { color: 'rgba(255,255,255,0.82)', fontSize: 10, fontWeight: '800', letterSpacing: 0.7, textTransform: 'uppercase' },
+  contextText: { color: 'rgba(255,255,255,0.93)', fontSize: 12, marginTop: 2, fontWeight: '700' },
   rightActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   themeBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.35)',
+    borderColor: 'rgba(255,255,255,0.3)',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.08)',
+    backgroundColor: 'rgba(255,255,255,0.12)',
   },
   bell: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.35)',
+    borderColor: 'rgba(255,255,255,0.3)',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.08)',
+    backgroundColor: 'rgba(255,255,255,0.12)',
   },
   badge: {
     position: 'absolute',
