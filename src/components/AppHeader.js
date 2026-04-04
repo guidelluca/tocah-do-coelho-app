@@ -16,9 +16,9 @@ export function AppHeader({ title = 'República Tocah', subtitle = '', onBellPre
       <View style={styles.left}>
         <View style={styles.logoWrap}>
           <Image
-            source={{ uri: 'https://drive.google.com/uc?export=download&id=1K-KUlO4ZNy5TFz1YIsVh__uxICixnkBS' }}
+            source={require('../../assets/icon.png')}
             style={styles.logo}
-            resizeMode="cover"
+            resizeMode="contain"
           />
         </View>
         <View style={{ flex: 1 }}>

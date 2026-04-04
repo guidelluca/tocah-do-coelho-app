@@ -108,6 +108,18 @@ function getContaStatusMeta(conta, referenceDate = new Date()) {
   return { label: 'Pendente', tone: 'pending', dueDay };
 }
 
+function getContaToneStyles(tone = 'pending', isDark = false) {
+  if (!isDark) {
+    return {
+      row: tone === 'paid' ? styles.contaRowPaid : tone === 'overdue' ? styles.contaRowOverdue : styles.contaRowPending,
+      textColor: '#1f2937',
+    };
+  }
+  if (tone === 'paid') return { row: styles.contaRowPaidDark, textColor: '#ecfdf3' };
+  if (tone === 'overdue') return { row: styles.contaRowOverdueDark, textColor: '#fff1f2' };
+  return { row: styles.contaRowPendingDark, textColor: '#fffbeb' };
+}
+
 export function FinancesScreen() {
   const { isDark, toggleTheme } = useThemeMode();
   const { resident, getResidentPhoto } = useResident();
@@ -698,7 +710,15 @@ export function FinancesScreen() {
                 </View>
               </View>
             </View>
-            {contasOperacionais.map((c, idx) => (
+            {contasOperacionais.map((c, idx) => {
+              const statusMeta = getContaStatusMeta(c);
+              const tone = getContaToneStyles(statusMeta.tone, isDark);
+              const hintToneStyle = statusMeta.tone === 'paid'
+                ? (isDark ? styles.contaHintPaidDark : styles.contaHintPaid)
+                : statusMeta.tone === 'overdue'
+                  ? (isDark ? styles.contaHintOverdueDark : styles.contaHintOverdue)
+                  : (isDark ? styles.contaHintPendingDark : styles.contaHintPending);
+              return (
               <View
                 key={`c-${idx}`}
                 style={[
@@ -708,27 +728,23 @@ export function FinancesScreen() {
                   {
                     borderBottomColor: colors.border,
                   },
-                  getContaStatusMeta(c).tone === 'paid' && styles.contaRowPaid,
-                  getContaStatusMeta(c).tone === 'pending' && styles.contaRowPending,
-                  getContaStatusMeta(c).tone === 'overdue' && styles.contaRowOverdue,
+                  tone.row,
                 ]}
               >
                 <View style={styles.entryMain}>
-                  <Text style={[styles.label, { color: colors.text }]}>{c?.conta || '-'}</Text>
+                  <Text style={[styles.label, { color: tone.textColor }]}>{c?.conta || '-'}</Text>
                   <Text
                     style={[
                       styles.rentHint,
-                      getContaStatusMeta(c).tone === 'paid' && styles.contaHintPaid,
-                      getContaStatusMeta(c).tone === 'pending' && styles.contaHintPending,
-                      getContaStatusMeta(c).tone === 'overdue' && styles.contaHintOverdue,
+                      hintToneStyle,
                     ]}
                   >
-                    Status: {getContaStatusMeta(c).label}
-                    {getContaStatusMeta(c).dueDay ? ` • Vence dia ${getContaStatusMeta(c).dueDay}` : ' • Vencimento nao informado'}
+                    Status: {statusMeta.label}
+                    {statusMeta.dueDay ? ` • Vence dia ${statusMeta.dueDay}` : ' • Vencimento nao informado'}
                   </Text>
                 </View>
                 <View style={styles.entryAside}>
-                  <Text style={[styles.value, styles.entryValue, styles.valueEmphasis, { color: colors.text }]}>{brl(c?.valor)}</Text>
+                  <Text style={[styles.value, styles.entryValue, styles.valueEmphasis, { color: tone.textColor }]}>{brl(c?.valor)}</Text>
                   <View style={styles.entryActionsRow}>
                     <Pressable style={[styles.iconBtn, String(c?.status || '').toUpperCase() === 'TRUE' && styles.iconBtnOk]} onPress={() => onToggleConta(c, idx)}>
                       <MaterialCommunityIcons name={String(c?.status || '').toUpperCase() === 'TRUE' ? 'check-circle' : 'clock-outline'} size={16} color={String(c?.status || '').toUpperCase() === 'TRUE' ? '#fff' : '#6a1b9a'} />
@@ -742,7 +758,8 @@ export function FinancesScreen() {
                   </View>
                 </View>
               </View>
-            ))}
+              );
+            })}
             {!contasOperacionais.length && <Text style={[styles.empty, { color: colors.muted }]}>Nenhuma conta fixa encontrada.</Text>}
             {!!contasOperacionais.length && (
               <View style={[styles.row, styles.fixedSplitRow, { borderBottomWidth: 0 }]}>
@@ -1283,6 +1300,9 @@ const styles = StyleSheet.create({
   contaRowPaid: { backgroundColor: '#ecfdf3', borderColor: '#86efac' },
   contaRowPending: { backgroundColor: '#fff7ed', borderColor: '#fed7aa' },
   contaRowOverdue: { backgroundColor: '#fef2f2', borderColor: '#fecaca' },
+  contaRowPaidDark: { backgroundColor: '#14532d', borderColor: '#22c55e' },
+  contaRowPendingDark: { backgroundColor: '#78350f', borderColor: '#f59e0b' },
+  contaRowOverdueDark: { backgroundColor: '#7f1d1d', borderColor: '#ef4444' },
   label: { flex: 1, paddingRight: 8, fontSize: 12, fontWeight: '600', lineHeight: 17 },
   value: { fontSize: 12, fontWeight: '800', textAlign: 'right' },
   fixedSplitRow: { marginTop: 8, borderTopWidth: 1, borderTopColor: '#e5e7eb', paddingTop: 11 },
@@ -1307,6 +1327,9 @@ const styles = StyleSheet.create({
   contaHintPaid: { color: '#166534' },
   contaHintPending: { color: '#b45309' },
   contaHintOverdue: { color: '#b91c1c' },
+  contaHintPaidDark: { color: '#bbf7d0' },
+  contaHintPendingDark: { color: '#fde68a' },
+  contaHintOverdueDark: { color: '#fecdd3' },
   empty: { fontSize: 12, fontWeight: '600', marginTop: 2 },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' },
   modalCard: { borderTopLeftRadius: 22, borderTopRightRadius: 22, padding: 16, paddingBottom: 24 },
