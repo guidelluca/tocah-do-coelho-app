@@ -237,6 +237,19 @@ async function readRangeOrEmpty(range) {
   }
 }
 
+async function getSheetsHealth() {
+  try {
+    const range = String(DADOS_RANGE || 'DadosApp!A:C').trim();
+    await readRange(range);
+    return { ok: true, message: 'Planilha conectada.' };
+  } catch (error) {
+    return {
+      ok: false,
+      message: `Sem conexao com a planilha: ${error?.message || 'erro desconhecido'}`,
+    };
+  }
+}
+
 function parseMonthSheetTitle(title) {
   const m = String(title || '').match(/^([A-Za-zÇç]{3})_(\d{4})$/);
   if (!m) return null;
@@ -352,6 +365,18 @@ function weekKey(date = new Date()) {
   return `${d.getUTCFullYear()}-W${String(weekNo).padStart(2, '0')}`;
 }
 
+function sortWeekKeysDesc(a = '', b = '') {
+  const parse = (wk) => {
+    const m = String(wk || '').match(/^(\d{4})-W(\d{2})$/);
+    if (!m) return { year: 0, week: 0 };
+    return { year: Number(m[1]), week: Number(m[2]) };
+  };
+  const aa = parse(a);
+  const bb = parse(b);
+  if (aa.year !== bb.year) return bb.year - aa.year;
+  return bb.week - aa.week;
+}
+
 function getRatingsSummaryForWeek(rows, wk) {
   const map = {};
   const expected = Math.max(1, RESIDENTS.length - 1);
@@ -454,8 +479,13 @@ async function hydrateTaskFeedPhotos(feed = []) {
   });
 }
 
-app.get('/health', (_, res) => {
-  res.json({ ok: true, service: 'tocah-sheets-proxy' });
+app.get('/health', async (_, res) => {
+  const sheets = await getSheetsHealth();
+  res.json({
+    ok: sheets.ok,
+    service: 'tocah-sheets-proxy',
+    sheets,
+  });
 });
 
 app.get('/api', async (req, res) => {
@@ -520,14 +550,16 @@ app.get('/api', async (req, res) => {
       const wk = weekKey();
       const rows = await readRangeOrEmpty(`${RATINGS_SHEET}!A:H`);
       const data = rows.slice(1);
-      const ratings = getRatingsSummaryForWeek(data, wk);
+      const weeks = Array.from(new Set(data.map((r) => String(r[0] || '').trim()).filter(Boolean))).sort(sortWeekKeysDesc);
+      const effectiveWeek = data.some((r) => String(r[0] || '') === wk) ? wk : (weeks[0] || wk);
+      const ratings = getRatingsSummaryForWeek(data, effectiveWeek);
       const history = {};
       for (const r of data) {
         const week = String(r[0] || '');
         if (!week) continue;
         if (!history[week]) history[week] = getRatingsSummaryForWeek(data, week);
       }
-      return res.json({ ok: true, week: wk, ratings, history });
+      return res.json({ ok: true, week: effectiveWeek, ratings, history });
     }
 
     if (action === 'getTaskFeed') {
@@ -537,6 +569,10 @@ app.get('/api', async (req, res) => {
       const data = hasHeader ? rows.slice(1) : rows;
       const baseRowIndex = hasHeader ? 2 : 1;
       const wk = weekKey();
+      const weeks = Array.from(
+        new Set(data.map((r) => String(r[0] || '').trim()).filter(Boolean))
+      ).sort(sortWeekKeysDesc);
+      const effectiveWeek = data.some((r) => String(r[0] || '') === wk) ? wk : (weeks[0] || wk);
       let feed = data
         .map((r, idx) => ({
           rowIndex: baseRowIndex + idx,
@@ -549,7 +585,7 @@ app.get('/api', async (req, res) => {
           content: String(r[6] || ''),
           photoDataUrl: String(r[7] || ''),
         }))
-        .filter((x) => x.week === wk)
+        .filter((x) => x.week === effectiveWeek)
         .sort((a, b) => String(b.ts).localeCompare(String(a.ts)));
       feed = feed.map((item) => {
         if (item.type !== 'rating') return item;
@@ -560,7 +596,7 @@ app.get('/api', async (req, res) => {
         };
       });
       feed = await hydrateTaskFeedPhotos(feed);
-      return res.json({ ok: true, week: wk, feed });
+      return res.json({ ok: true, week: effectiveWeek, feed });
     }
 
     if (action === 'getFinanceSnapshot') {

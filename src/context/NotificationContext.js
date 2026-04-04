@@ -62,10 +62,7 @@ export function NotificationProvider({ children }) {
       try {
         await refreshNotifications();
       } catch {
-        if (mounted) {
-          setNotificationCount(0);
-          setNotificationItems([]);
-        }
+        // Keep last successful notification snapshot while offline.
       }
     };
     safeRefresh();

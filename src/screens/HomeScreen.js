@@ -5,7 +5,7 @@ import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
 import { useThemeMode } from '../context/ThemeContext';
 import { darkTheme, lightTheme } from '../constants/theme';
-import { addCaixinhaEntry, concluirTarefa, getCaixinha, getCaixinhaStatement, getFinanceSnapshot, getTarefaSemana } from '../services/api';
+import { addCaixinhaEntry, concluirTarefa, getApiConnectionStatus, getCaixinha, getCaixinhaStatement, getFinanceSnapshot, getTarefaSemana, subscribeApiConnectionStatus } from '../services/api';
 import { AppHeader } from '../components/AppHeader';
 import { useResident } from '../context/ResidentContext';
 import { useNotifications } from '../context/NotificationContext';
@@ -79,6 +79,7 @@ export function HomeScreen() {
   const [rentDetailResident, setRentDetailResident] = useState(null);
   const [taskPosting, setTaskPosting] = useState(false);
   const [notificationModalVisible, setNotificationModalVisible] = useState(false);
+  const [apiStatus, setApiStatus] = useState(() => getApiConnectionStatus());
 
   const takeTaskProofPhoto = async () => {
     const permission = await ImagePicker.requestCameraPermissionsAsync();
@@ -191,6 +192,11 @@ export function HomeScreen() {
   useEffect(() => {
     refreshNotifications();
   }, [resident]);
+
+  useEffect(() => {
+    const unsubscribe = subscribeApiConnectionStatus((next) => setApiStatus(next));
+    return unsubscribe;
+  }, []);
 
   useFocusEffect(
     useCallback(() => {
@@ -331,6 +337,10 @@ export function HomeScreen() {
       </View>
 
       {!!error && <Text style={styles.error}>{error}</Text>}
+      {!apiStatus?.online && !!apiStatus?.message && <Text style={styles.offlineHint}>{apiStatus.message}</Text>}
+      {!apiStatus?.online && !!apiStatus?.cachedAt && (
+        <Text style={styles.offlineHint}>Ultima consulta salva: {new Date(apiStatus.cachedAt).toLocaleString('pt-BR')}</Text>
+      )}
       {!!error && (
         <Pressable style={styles.retryBtn} onPress={() => load('pull')}>
           <MaterialCommunityIcons name="refresh" size={14} color="#fff" />
@@ -636,6 +646,7 @@ const styles = StyleSheet.create({
   taskActionText: { color: '#fff', fontSize: 12, fontWeight: '800' },
   taskActionTextDone: { color: '#166534' },
   error: { color: '#ef4444', fontWeight: '700', marginBottom: 2 },
+  offlineHint: { color: '#b45309', fontWeight: '700', marginBottom: 2 },
   retryBtn: { alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#6a1b9a', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 7, marginBottom: 6 },
   retryBtnText: { color: '#fff', fontSize: 11, fontWeight: '800' },
   residentRow: { gap: 8, paddingBottom: 4, marginBottom: 2 },

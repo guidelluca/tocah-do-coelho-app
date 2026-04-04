@@ -1,4 +1,5 @@
 import Constants from 'expo-constants';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { NativeModules } from 'react-native';
 
 const hostFromExpo =
@@ -15,9 +16,22 @@ const hostFromScriptUrl = String(NativeModules?.SourceCode?.scriptURL || '')
   .split('/')[0]
   .split(':')[0]
   .trim();
+const webOrigin =
+  typeof window !== 'undefined' && window?.location?.origin
+    ? String(window.location.origin).trim()
+    : '';
+const FALLBACK_REMOTE_API = 'https://tocah-do-coelho-app.onrender.com/api';
+
+function normalizeApiBase(raw = '') {
+  const value = String(raw || '').trim();
+  if (!value) return '';
+  return value.replace(/\/+$/, '');
+}
 
 const API_URL =
-  process.env.EXPO_PUBLIC_API_URL ||
+  normalizeApiBase(process.env.EXPO_PUBLIC_API_URL) ||
+  (webOrigin ? `${webOrigin}/api` : '') ||
+  FALLBACK_REMOTE_API ||
   (hostFromExpo ? `http://${hostFromExpo}:4000/api` : '') ||
   'http://localhost:4000/api';
 
@@ -36,16 +50,98 @@ function isValidHost(raw = '') {
 const API_BASE_CANDIDATES = Array.from(
   new Set(
     [
-      process.env.EXPO_PUBLIC_API_URL,
+      normalizeApiBase(process.env.EXPO_PUBLIC_API_URL),
+      FALLBACK_REMOTE_API,
+      webOrigin ? `${webOrigin}/api` : '',
       isValidHost(hostFromExpo) ? `http://${hostFromExpo}:4000/api` : '',
       isValidHost(hostFromManifest) ? `http://${hostFromManifest}:4000/api` : '',
       isValidHost(hostFromScriptUrl) ? `http://${hostFromScriptUrl}:4000/api` : '',
       'http://localhost:4000/api',
-    ].filter(Boolean)
+    ].map((base) => normalizeApiBase(base)).filter(Boolean)
   )
 );
 
 let preferredApiBase = API_URL;
+const CACHE_KEY_PREFIX = '@tocah_api_cache:';
+const MAX_CACHE_AGE_MS = 1000 * 60 * 60 * 24; // 24h
+let connectionStatus = {
+  online: true,
+  source: 'network',
+  message: '',
+  cachedAt: '',
+  apiBase: API_URL,
+  updatedAt: '',
+};
+const connectionListeners = new Set();
+
+function notifyConnectionStatus() {
+  connectionListeners.forEach((listener) => {
+    try {
+      listener(connectionStatus);
+    } catch {
+      // Ignore listener errors to keep network flow stable.
+    }
+  });
+}
+
+function updateConnectionStatus(next = {}) {
+  connectionStatus = {
+    ...connectionStatus,
+    ...next,
+    updatedAt: new Date().toISOString(),
+  };
+  notifyConnectionStatus();
+}
+
+export function getApiConnectionStatus() {
+  return { ...connectionStatus };
+}
+
+export function subscribeApiConnectionStatus(listener) {
+  if (typeof listener !== 'function') return () => {};
+  connectionListeners.add(listener);
+  listener({ ...connectionStatus });
+  return () => {
+    connectionListeners.delete(listener);
+  };
+}
+
+function buildCacheKey(url) {
+  try {
+    const parsed = new URL(String(url || ''));
+    return `${CACHE_KEY_PREFIX}${parsed.pathname}${parsed.search}`;
+  } catch {
+    return `${CACHE_KEY_PREFIX}${String(url || '').trim()}`;
+  }
+}
+
+async function readCachedPayload(url) {
+  try {
+    const raw = await AsyncStorage.getItem(buildCacheKey(url));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed?.savedAt || typeof parsed?.payload === 'undefined') return null;
+    const ageMs = Date.now() - new Date(parsed.savedAt).getTime();
+    if (!Number.isFinite(ageMs) || ageMs < 0 || ageMs > MAX_CACHE_AGE_MS) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+async function saveCachedPayload(url, payload) {
+  try {
+    await AsyncStorage.setItem(
+      buildCacheKey(url),
+      JSON.stringify({
+        savedAt: new Date().toISOString(),
+        payload,
+      })
+    );
+  } catch {
+    // Cache failure should not block app usage.
+  }
+}
 
 export function getApiDebugInfo() {
   return {
@@ -59,7 +155,7 @@ export function getApiDebugInfo() {
 }
 
 export function setPreferredApiBase(nextBase) {
-  if (nextBase) preferredApiBase = String(nextBase).trim();
+  if (nextBase) preferredApiBase = normalizeApiBase(nextBase);
 }
 
 function mapUrlToBase(url, base) {
@@ -117,6 +213,14 @@ async function requestJson(url) {
     try {
       const data = await fetchJson(candidateUrl);
       preferredApiBase = base;
+      updateConnectionStatus({
+        online: true,
+        source: 'network',
+        message: '',
+        cachedAt: '',
+        apiBase: base,
+      });
+      await saveCachedPayload(url, data);
       return data;
     } catch (error) {
       lastError = error;
@@ -126,6 +230,14 @@ async function requestJson(url) {
           await sleep(1200);
           const retryData = await fetchJson(candidateUrl);
           preferredApiBase = base;
+          updateConnectionStatus({
+            online: true,
+            source: 'network',
+            message: '',
+            cachedAt: '',
+            apiBase: base,
+          });
+          await saveCachedPayload(url, retryData);
           return retryData;
         } catch (retryError) {
           lastError = retryError;
@@ -133,6 +245,24 @@ async function requestJson(url) {
       }
     }
   }
+  const cached = await readCachedPayload(url);
+  if (cached) {
+    updateConnectionStatus({
+      online: false,
+      source: 'cache',
+      message: 'API indisponivel. Exibindo ultima consulta salva.',
+      cachedAt: cached.savedAt,
+      apiBase: preferredApiBase,
+    });
+    return cached.payload;
+  }
+  updateConnectionStatus({
+    online: false,
+    source: 'offline',
+    message: 'Sem conexao com API/planilha no momento.',
+    cachedAt: '',
+    apiBase: preferredApiBase,
+  });
   if (String(lastError?.message || '').includes('Network request failed')) {
     throw new Error(`Sem conexao com a API (${preferredApiBase}). Verifique backend e IP local.`);
   }
@@ -150,6 +280,13 @@ async function postJson(body) {
         body: JSON.stringify(body),
       });
       preferredApiBase = base;
+      updateConnectionStatus({
+        online: true,
+        source: 'network',
+        message: '',
+        cachedAt: '',
+        apiBase: base,
+      });
       return data;
     } catch (error) {
       lastError = error;
@@ -163,6 +300,13 @@ async function postJson(body) {
             body: JSON.stringify(body),
           });
           preferredApiBase = base;
+          updateConnectionStatus({
+            online: true,
+            source: 'network',
+            message: '',
+            cachedAt: '',
+            apiBase: base,
+          });
           return retryData;
         } catch (retryError) {
           lastError = retryError;
@@ -170,6 +314,13 @@ async function postJson(body) {
       }
     }
   }
+  updateConnectionStatus({
+    online: false,
+    source: 'offline',
+    message: 'Sem conexao com API/planilha no momento.',
+    cachedAt: '',
+    apiBase: preferredApiBase,
+  });
   if (String(lastError?.message || '').includes('Network request failed')) {
     throw new Error(`Sem conexao com a API (${preferredApiBase}). Verifique backend e IP local.`);
   }
@@ -206,11 +357,26 @@ export async function getApiHealth() {
     try {
       const data = await fetchJson(toHealthUrl(base));
       preferredApiBase = base;
+      const sheetsOk = data?.sheets?.ok !== false;
+      updateConnectionStatus({
+        online: Boolean(data?.ok) && sheetsOk,
+        source: sheetsOk ? 'network' : 'degraded',
+        message: sheetsOk ? '' : (data?.sheets?.message || 'API online, mas sem conexao com a planilha.'),
+        cachedAt: '',
+        apiBase: base,
+      });
       return data;
     } catch (error) {
       lastError = error;
     }
   }
+  updateConnectionStatus({
+    online: false,
+    source: 'offline',
+    message: 'API indisponivel. Sem validacao de conexao com planilha.',
+    cachedAt: '',
+    apiBase: preferredApiBase,
+  });
   throw lastError || new Error('Falha ao verificar saude da API.');
 }
 

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Image, Modal, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
-import { concluirTarefa, getEscalaSemana, getTaskRatings, rateTask } from '../services/api';
+import { concluirTarefa, getApiConnectionStatus, getEscalaSemana, getTaskRatings, rateTask, subscribeApiConnectionStatus } from '../services/api';
 import { useThemeMode } from '../context/ThemeContext';
 import { darkTheme, lightTheme } from '../constants/theme';
 import { AppHeader } from '../components/AppHeader';
@@ -31,6 +31,7 @@ export function TasksScreen() {
   const [comentario, setComentario] = useState('');
   const [categoriaNota, setCategoriaNota] = useState('casa');
   const [ratingSaving, setRatingSaving] = useState(false);
+  const [apiStatus, setApiStatus] = useState(() => getApiConnectionStatus());
   const completedCount = Object.values(checked).filter(Boolean).length;
   const hasBanheirao = (taskName) => String(taskName || '').toLowerCase().includes('banheir');
   const takeTaskProofPhoto = async () => {
@@ -81,6 +82,11 @@ export function TasksScreen() {
     load();
   }, []);
 
+  useEffect(() => {
+    const unsubscribe = subscribeApiConnectionStatus((next) => setApiStatus(next));
+    return unsubscribe;
+  }, []);
+
   useFocusEffect(
     useCallback(() => {
       load('silent');
@@ -115,6 +121,10 @@ export function TasksScreen() {
           </View>
         ) : null}
         {!!error && !loading && <Text style={[styles.error, { color: '#ef4444' }]}>{error}</Text>}
+        {!apiStatus?.online && !!apiStatus?.message && !loading && <Text style={[styles.error, { color: '#b45309' }]}>{apiStatus.message}</Text>}
+        {!apiStatus?.online && !!apiStatus?.cachedAt && !loading && (
+          <Text style={[styles.error, { color: '#b45309' }]}>Ultima consulta salva: {new Date(apiStatus.cachedAt).toLocaleString('pt-BR')}</Text>
+        )}
         {!loading && escala.map((item, idx) => {
           const done = !!checked[idx];
           const stat = ratings[item.nome] || {};

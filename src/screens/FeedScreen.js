@@ -4,7 +4,7 @@ import { Alert, Image, Modal, Pressable, RefreshControl, ScrollView, Share, Styl
 import * as ImagePicker from 'expo-image-picker';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
-import { addTaskFeedComment, deleteTaskFeedPost, getTaskFeed } from '../services/api';
+import { addTaskFeedComment, deleteTaskFeedPost, getApiConnectionStatus, getTaskFeed, subscribeApiConnectionStatus } from '../services/api';
 import { useThemeMode } from '../context/ThemeContext';
 import { darkTheme, lightTheme } from '../constants/theme';
 import { AppHeader } from '../components/AppHeader';
@@ -74,6 +74,7 @@ export function FeedScreen() {
   const [photoViewerVisible, setPhotoViewerVisible] = useState(false);
   const [selectedFeedPhoto, setSelectedFeedPhoto] = useState('');
   const [likedByPostTs, setLikedByPostTs] = useState({});
+  const [apiStatus, setApiStatus] = useState(() => getApiConnectionStatus());
 
   const load = useCallback(async (mode = 'normal') => {
     if (mode === 'pull') setRefreshing(true);
@@ -104,6 +105,11 @@ export function FeedScreen() {
         setLikedByPostTs({});
       }
     })();
+  }, []);
+
+  useEffect(() => {
+    const unsubscribe = subscribeApiConnectionStatus((next) => setApiStatus(next));
+    return unsubscribe;
   }, []);
 
   useFocusEffect(
@@ -334,6 +340,10 @@ export function FeedScreen() {
       </View>
 
       {!!error && <Text style={styles.error}>{error}</Text>}
+      {!apiStatus?.online && !!apiStatus?.message && <Text style={styles.offlineHint}>{apiStatus.message}</Text>}
+      {!apiStatus?.online && !!apiStatus?.cachedAt && (
+        <Text style={styles.offlineHint}>Ultima consulta salva: {new Date(apiStatus.cachedAt).toLocaleString('pt-BR')}</Text>
+      )}
       {!!error && (
         <Pressable style={styles.retryBtn} onPress={() => load('pull')}>
           <MaterialCommunityIcons name="refresh" size={14} color="#fff" />
@@ -623,6 +633,7 @@ const styles = StyleSheet.create({
   photoViewerImage: { width: '100%', height: '78%', borderRadius: 12 },
   subtitle: { marginTop: 4, fontSize: 12, fontWeight: '600' },
   error: { color: '#ef4444', fontWeight: '700', marginBottom: 2 },
+  offlineHint: { color: '#b45309', fontWeight: '700', marginBottom: 2 },
   retryBtn: { alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#6a1b9a', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 7, marginBottom: 6 },
   retryBtnText: { color: '#fff', fontSize: 11, fontWeight: '800' },
   progressText: { fontSize: 11, fontWeight: '800' },

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, Image, Modal, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
-import { addFinanceEntry, deleteFinanceEntry, getApiHealth, getFinanceSnapshot, toggleContaStatus, updateFinanceEntry } from '../services/api';
+import { addFinanceEntry, deleteFinanceEntry, getApiConnectionStatus, getApiHealth, getFinanceSnapshot, subscribeApiConnectionStatus, toggleContaStatus, updateFinanceEntry } from '../services/api';
 import { useThemeMode } from '../context/ThemeContext';
 import { darkTheme, lightTheme } from '../constants/theme';
 import { AppHeader } from '../components/AppHeader';
@@ -138,6 +138,7 @@ export function FinancesScreen() {
   const [rentDetailVisible, setRentDetailVisible] = useState(false);
   const [rentDetailResident, setRentDetailResident] = useState(null);
   const [apiOnline, setApiOnline] = useState(true);
+  const [apiStatus, setApiStatus] = useState(() => getApiConnectionStatus());
   const [lastSyncAt, setLastSyncAt] = useState('');
   const [form, setForm] = useState({
     quem: '',
@@ -186,6 +187,14 @@ export function FinancesScreen() {
         setApiOnline(false);
       }
     })();
+  }, []);
+
+  useEffect(() => {
+    const unsubscribe = subscribeApiConnectionStatus((next) => {
+      setApiStatus(next);
+      setApiOnline(Boolean(next?.online));
+    });
+    return unsubscribe;
   }, []);
 
   useEffect(() => {
@@ -547,7 +556,9 @@ export function FinancesScreen() {
           <View style={[styles.syncPill, { backgroundColor: apiOnline ? (isDark ? '#1f3a2f' : '#e8f5e9') : (isDark ? '#3a1f25' : '#ffebee') }]}>
             <MaterialCommunityIcons name={apiOnline ? 'cloud-check-outline' : 'cloud-alert-outline'} size={12} color={apiOnline ? '#2e7d32' : '#c62828'} />
             <Text style={[styles.syncPillText, { color: apiOnline ? '#2e7d32' : '#c62828' }]}>
-              {apiOnline ? `Sincronização ativa${lastSyncAt ? ` • ${new Date(lastSyncAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}` : ''}` : 'Sem conexão com API'}
+              {apiOnline
+                ? `Sincronização ativa${lastSyncAt ? ` • ${new Date(lastSyncAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}` : ''}`
+                : (apiStatus?.message || 'Sem conexão com API')}
             </Text>
           </View>
         </View>
@@ -567,6 +578,9 @@ export function FinancesScreen() {
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => load('pull')} tintColor={colors.primary} />}
         >
           {!!error && <Text style={styles.error}>{error}</Text>}
+          {!apiOnline && !!apiStatus?.cachedAt && (
+            <Text style={styles.offlineHint}>Ultima consulta salva: {new Date(apiStatus.cachedAt).toLocaleString('pt-BR')}</Text>
+          )}
           {!!error && (
             <Pressable style={styles.retryBtn} onPress={() => load('pull')}>
               <MaterialCommunityIcons name="refresh" size={14} color="#fff" />
@@ -1303,6 +1317,7 @@ const styles = StyleSheet.create({
   iconBtn: { width: 30, height: 30, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: '#f3e5f5', marginLeft: 0, flexShrink: 0, borderWidth: 1, borderColor: 'rgba(106,27,154,0.12)' },
   iconBtnOk: { backgroundColor: '#16a34a' },
   error: { color: '#ef4444', fontWeight: '700', marginBottom: 4 },
+  offlineHint: { color: '#b45309', fontWeight: '700', marginBottom: 4 },
   retryBtn: { alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#6a1b9a', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 7, marginBottom: 8 },
   retryBtnText: { color: '#fff', fontSize: 11, fontWeight: '800' },
   rentItem: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 9, borderBottomWidth: 1 },
