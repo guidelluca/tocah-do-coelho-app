@@ -26,8 +26,15 @@
       "baseUrl": "/tocah-do-coelho-app"
     },
     "web": {
-      "output": "static",
-      "favicon": "./assets/favicon.png"
+      "output": "single",
+      "favicon": "./assets/favicon.png",
+      "name": "Tocah",
+      "shortName": "Tocah",
+      "display": "standalone",
+      "themeColor": "#6a1b9a",
+      "backgroundColor": "#ffffff",
+      "lang": "pt-BR",
+      "description": "App da República Tocah para tarefas, finanças e feed."
     }
   }
 }

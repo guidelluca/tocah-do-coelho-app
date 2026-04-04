@@ -249,7 +249,15 @@ async function resolveActiveFinanceSheet() {
 function toNumberLike(value) {
   const text = String(value ?? '').trim();
   if (!text) return null;
-  const normalized = text.replace(/\./g, '').replace(',', '.').replace(/[^\d.-]/g, '');
+  let normalized = text.replace(/[^\d,.-]/g, '');
+  const lastComma = normalized.lastIndexOf(',');
+  const lastDot = normalized.lastIndexOf('.');
+  if (lastComma >= 0 || lastDot >= 0) {
+    const decimalSep = lastComma > lastDot ? ',' : '.';
+    const thousandSep = decimalSep === ',' ? '.' : ',';
+    normalized = normalized.split(thousandSep).join('');
+    if (decimalSep === ',') normalized = normalized.replace(',', '.');
+  }
   const n = Number(normalized);
   return Number.isFinite(n) ? n : null;
 }
@@ -587,7 +595,7 @@ app.post('/api', async (req, res) => {
         if (rowIdx < 0) return badRequest(res, 'Nao foi possivel encontrar linha vazia para conta.');
         await updateRange(`${activeFinanceSheet}!B${rowIdx + 1}:F${rowIdx + 1}`, [
           payload.conta || payload.descricao || 'Conta',
-          payload.valor || '',
+          normalizeMoney2(payload.valor),
           payload.divisao || '',
           payload.vencimento || '',
           payload.status || 'FALSE',
@@ -614,7 +622,7 @@ app.post('/api', async (req, res) => {
 
         await updateRange(`${activeFinanceSheet}!J${rowIdx + 1}:M${rowIdx + 1}`, [
           payer,
-          payload.valor || payload.quanto || '',
+          normalizeMoney2(payload.valor || payload.quanto),
           payload.oQue || payload.descricao || '',
           payload.obs || '',
         ]);
@@ -651,7 +659,7 @@ app.post('/api', async (req, res) => {
         if (rowIdx < 0) return badRequest(res, 'Nao foi possivel encontrar linha vazia para acerto individual.');
         await updateRange(`${activeFinanceSheet}!T${rowIdx + 1}:W${rowIdx + 1}`, [
           payload.quem || usuario || '',
-          payload.deveQuanto || payload.valor || '',
+          normalizeMoney2(payload.deveQuanto || payload.valor),
           payload.paraQuem || '',
           payload.obs || payload.descricao || '',
         ]);
@@ -669,7 +677,7 @@ app.post('/api', async (req, res) => {
       if (entryType === 'conta_fixa') {
         await updateRange(`${activeFinanceSheet}!B${row}:F${row}`, [
           payload.conta || '',
-          payload.valor || '',
+          normalizeMoney2(payload.valor),
           payload.divisao || '',
           payload.vencimento || '',
           payload.status || 'FALSE',
@@ -679,7 +687,7 @@ app.post('/api', async (req, res) => {
       if (entryType === 'gasto_coletivo') {
         await updateRange(`${activeFinanceSheet}!J${row}:M${row}`, [
           payload.quem || '',
-          payload.quanto || payload.valor || '',
+          normalizeMoney2(payload.quanto || payload.valor),
           payload.oQue || '',
           payload.obs || '',
         ]);
@@ -688,7 +696,7 @@ app.post('/api', async (req, res) => {
       if (entryType === 'acerto_individual') {
         await updateRange(`${activeFinanceSheet}!T${row}:W${row}`, [
           payload.quem || '',
-          payload.deveQuanto || payload.valor || '',
+          normalizeMoney2(payload.deveQuanto || payload.valor),
           payload.paraQuem || '',
           payload.obs || '',
         ]);

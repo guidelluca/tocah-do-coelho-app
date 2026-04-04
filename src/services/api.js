@@ -68,6 +68,11 @@ function mapUrlToBase(url, base) {
   return url;
 }
 
+function toHealthUrl(base) {
+  const trimmed = String(base || '').replace(/\/+$/, '');
+  return `${trimmed.replace(/\/api$/, '')}/health`;
+}
+
 async function fetchJson(url, init) {
   const controller = new AbortController();
   const method = String(init?.method || 'GET').toUpperCase();
@@ -160,6 +165,21 @@ function toSheetBool(value) {
 
 export async function getFinanceSnapshot() {
   return requestJson(`${API_URL}?action=getFinanceSnapshot`);
+}
+
+export async function getApiHealth() {
+  const candidates = [preferredApiBase, ...API_BASE_CANDIDATES.filter((b) => b !== preferredApiBase)];
+  let lastError = null;
+  for (const base of candidates) {
+    try {
+      const data = await fetchJson(toHealthUrl(base));
+      preferredApiBase = base;
+      return data;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError || new Error('Falha ao verificar saude da API.');
 }
 
 export async function addFinanceEntry({ entryType, usuario, payload }) {

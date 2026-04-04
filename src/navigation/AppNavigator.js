@@ -7,11 +7,13 @@ import { FeedScreen } from '../screens/FeedScreen';
 import { NildeScreen } from '../screens/NildeScreen';
 import { useThemeMode } from '../context/ThemeContext';
 import { darkTheme, lightTheme } from '../constants/theme';
+import { useNotifications } from '../context/NotificationContext';
 
 const Tab = createBottomTabNavigator();
 
 export function AppNavigator() {
   const { isDark } = useThemeMode();
+  const { notificationCount } = useNotifications();
   const colors = isDark ? darkTheme : lightTheme;
   return (
     <Tab.Navigator
@@ -41,7 +43,14 @@ export function AppNavigator() {
       <Tab.Screen name="Financas" component={FinancesScreen} />
       <Tab.Screen name="Tarefas" component={TasksScreen} />
       <Tab.Screen name="Nilde" component={NildeScreen} />
-      <Tab.Screen name="Feed" component={FeedScreen} />
+      <Tab.Screen
+        name="Feed"
+        component={FeedScreen}
+        options={{
+          tabBarBadge: notificationCount > 0 ? (notificationCount > 99 ? '99+' : notificationCount) : undefined,
+          tabBarBadgeStyle: { backgroundColor: '#ef4444', color: '#fff', fontSize: 10, fontWeight: '800' },
+        }}
+      />
     </Tab.Navigator>
   );
 }

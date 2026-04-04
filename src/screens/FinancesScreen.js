@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, Modal, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, Image, Modal, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
-import { addFinanceEntry, deleteFinanceEntry, getApiDebugInfo, getFinanceSnapshot, toggleContaStatus, updateFinanceEntry } from '../services/api';
+import { addFinanceEntry, deleteFinanceEntry, getApiDebugInfo, getApiHealth, getFinanceSnapshot, toggleContaStatus, updateFinanceEntry } from '../services/api';
 import { useThemeMode } from '../context/ThemeContext';
 import { darkTheme, lightTheme } from '../constants/theme';
 import { AppHeader } from '../components/AppHeader';
@@ -29,6 +29,32 @@ function toNumber(value) {
 function toSheetMoney(value) {
   const n = toNumber(value);
   return Number.isFinite(n) ? n.toFixed(2) : '0.00';
+}
+
+function forceDotDecimal(value) {
+  const raw = String(value ?? '').trim();
+  if (!raw) return '0.00';
+  if (raw.includes('.') || raw.includes(',')) return toSheetMoney(raw);
+  const digits = raw.replace(/[^\d-]/g, '');
+  if (!digits || digits === '-') return '0.00';
+  const negative = digits.startsWith('-');
+  const onlyDigits = digits.replace('-', '');
+  if (!onlyDigits) return '0.00';
+  if (onlyDigits.length === 1) return `${negative ? '-' : ''}0.0${onlyDigits}`;
+  if (onlyDigits.length === 2) return `${negative ? '-' : ''}0.${onlyDigits}`;
+  const intPart = onlyDigits.slice(0, -2);
+  const decPart = onlyDigits.slice(-2);
+  return `${negative ? '-' : ''}${intPart}.${decPart}`;
+}
+
+function formatMoneyInput(value) {
+  let digits = String(value ?? '').replace(/[^\d]/g, '');
+  if (!digits) return '';
+  if (digits.length > 9) digits = digits.slice(0, 9);
+  const cents = digits.slice(-2).padStart(2, '0');
+  const whole = digits.length > 2 ? digits.slice(0, -2) : '0';
+  const normalizedWhole = whole.replace(/^0+(?=\d)/, '');
+  return `${normalizedWhole || '0'},${cents}`;
 }
 
 const brl = (v) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(toNumber(v));
@@ -84,7 +110,7 @@ function getContaStatusMeta(conta, referenceDate = new Date()) {
 
 export function FinancesScreen() {
   const { isDark, toggleTheme } = useThemeMode();
-  const { resident } = useResident();
+  const { resident, getResidentPhoto } = useResident();
   const colors = isDark ? darkTheme : lightTheme;
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -100,6 +126,8 @@ export function FinancesScreen() {
   const [saving, setSaving] = useState(false);
   const [rentDetailVisible, setRentDetailVisible] = useState(false);
   const [rentDetailResident, setRentDetailResident] = useState(null);
+  const [apiOnline, setApiOnline] = useState(true);
+  const [lastSyncAt, setLastSyncAt] = useState('');
   const [form, setForm] = useState({
     quem: '',
     oQue: '',
@@ -126,13 +154,27 @@ export function FinancesScreen() {
         gastosColetivos: data?.gastosColetivos || [],
         acertosIndividuais: data?.acertosIndividuais || [],
       });
+      setApiOnline(true);
+      setLastSyncAt(new Date().toISOString());
       setError('');
     } catch (e) {
+      setApiOnline(false);
       setError(e.message || 'Erro ao carregar financas');
     } finally {
       if (mode === 'normal') setLoading(false);
       if (mode === 'pull') setRefreshing(false);
     }
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        await getApiHealth();
+        setApiOnline(true);
+      } catch {
+        setApiOnline(false);
+      }
+    })();
   }, []);
 
   useEffect(() => {
@@ -339,7 +381,7 @@ export function FinancesScreen() {
             payload: {
               quem: form.quem.trim(),
               oQue: form.oQue.trim(),
-              quanto: toSheetMoney(form.quanto),
+              quanto: forceDotDecimal(form.quanto),
               obs: obsPayload,
             },
           });
@@ -353,7 +395,7 @@ export function FinancesScreen() {
                 payload: {
                   quem: devedor,
                   paraQuem: payer,
-                  deveQuanto: valorAcerto,
+                  deveQuanto: forceDotDecimal(valorAcerto),
                   obs: form.obs.trim(),
                 },
               });
@@ -378,7 +420,7 @@ export function FinancesScreen() {
             await addFinanceEntry({
               entryType: 'acertoIndividual',
               usuario: resident,
-              payload: { quem: devedor, paraQuem: credor, deveQuanto: toSheetMoney(valorPorPessoa), obs: obsPayload },
+              payload: { quem: devedor, paraQuem: credor, deveQuanto: forceDotDecimal(valorPorPessoa), obs: obsPayload },
             });
           }
         }
@@ -404,13 +446,13 @@ export function FinancesScreen() {
           await updateFinanceEntry({
             entryType: 'gastoColetivo',
             rowIndex: editingItem._rowIndex,
-            payload: { quem: form.quem.trim(), oQue: form.oQue.trim(), quanto: toSheetMoney(form.quanto), obs: obsPayload },
+            payload: { quem: form.quem.trim(), oQue: form.oQue.trim(), quanto: forceDotDecimal(form.quanto), obs: obsPayload },
           });
         } else if (entryType === 'acertoIndividual') {
           await updateFinanceEntry({
             entryType: 'acertoIndividual',
             rowIndex: editingItem._rowIndex,
-            payload: { quem: form.quem.trim(), paraQuem: form.paraQuem.trim(), deveQuanto: toSheetMoney(form.deveQuanto), obs: form.obs.trim() },
+            payload: { quem: form.quem.trim(), paraQuem: form.paraQuem.trim(), deveQuanto: forceDotDecimal(form.deveQuanto), obs: form.obs.trim() },
           });
         }
       }
@@ -491,6 +533,12 @@ export function FinancesScreen() {
         <View>
           <Text style={[styles.subtitle, { color: colors.muted }]}>Gestão Financeira</Text>
           <Text style={[styles.helper, { color: colors.muted }]}>Atualiza automaticamente com a planilha</Text>
+          <View style={[styles.syncPill, { backgroundColor: apiOnline ? (isDark ? '#1f3a2f' : '#e8f5e9') : (isDark ? '#3a1f25' : '#ffebee') }]}>
+            <MaterialCommunityIcons name={apiOnline ? 'cloud-check-outline' : 'cloud-alert-outline'} size={12} color={apiOnline ? '#2e7d32' : '#c62828'} />
+            <Text style={[styles.syncPillText, { color: apiOnline ? '#2e7d32' : '#c62828' }]}>
+              {apiOnline ? `Sincronização ativa${lastSyncAt ? ` • ${new Date(lastSyncAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}` : ''}` : 'Sem conexão com API'}
+            </Text>
+          </View>
         </View>
         <Pressable style={[styles.themeBtn, { backgroundColor: colors.background }]} onPress={toggleTheme}>
           <MaterialCommunityIcons name={isDark ? 'white-balance-sunny' : 'moon-waning-crescent'} size={18} color={colors.text} />
@@ -548,13 +596,20 @@ export function FinancesScreen() {
                   <Text style={[styles.previewSubTitle, { color: colors.muted }]}>Aluguel + contas por morador</Text>
                 </View>
               </View>
-              <Text style={[styles.liveBadge, { color: colors.primary }]}>Ao vivo</Text>
+              <View style={styles.livePill}>
+                <MaterialCommunityIcons name="pulse" size={11} color="#6a1b9a" />
+                <Text style={[styles.liveBadge, { color: colors.primary }]}>Ao vivo</Text>
+              </View>
             </View>
             {(snapshot.residents || []).map((r, idx) => (
               <Pressable key={`r-${idx}`} style={[styles.previewResidentCard, { borderColor: colors.border }]} onPress={() => openRentDetail(r)}>
-                <View style={[styles.rentAvatar, styles.rentAvatarStrong, styles.previewAvatar]}>
-                  <Text style={styles.rentAvatarText}>{getAvatarInitial(r?.nome)}</Text>
-                </View>
+                {getResidentPhoto(r?.nome) ? (
+                  <Image source={{ uri: getResidentPhoto(r?.nome) }} style={[styles.rentAvatarPhoto, styles.rentAvatarStrong, styles.previewAvatar]} />
+                ) : (
+                  <View style={[styles.rentAvatar, styles.rentAvatarStrong, styles.previewAvatar]}>
+                    <Text style={styles.rentAvatarText}>{getAvatarInitial(r?.nome)}</Text>
+                  </View>
+                )}
                 <View style={{ flex: 1 }}>
                   <Text style={[styles.labelStrong, { color: colors.text }]}>{r?.nome || '-'}</Text>
                   <View style={styles.previewMetaRow}>
@@ -566,6 +621,7 @@ export function FinancesScreen() {
                   <Text style={[styles.previewAmountLabel, { color: colors.muted }]}>Total</Text>
                   <Text style={[styles.previewAmountValue, { color: colors.text }]}>{brl(r?.total)}</Text>
                 </View>
+                <MaterialCommunityIcons name="chevron-right" size={16} color="#94a3b8" />
               </Pressable>
             ))}
             {!snapshot.residents?.length && <Text style={[styles.empty, { color: colors.muted }]}>Nenhum morador encontrado.</Text>}
@@ -582,7 +638,10 @@ export function FinancesScreen() {
               <View style={styles.titleIconPill}>
                 <MaterialCommunityIcons name="chart-donut" size={15} color="#6a1b9a" />
               </View>
-              <Text style={[styles.heroLabel, { color: colors.muted }]}>Resumo Financeiro</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.heroLabel, { color: colors.muted }]}>Resumo Financeiro</Text>
+                <Text style={[styles.heroSubLabel, { color: colors.muted }]}>Visão consolidada das despesas da república</Text>
+              </View>
             </View>
             <Text style={[styles.heroValue, { color: colors.text }]}>{brl(totalGeral)}</Text>
             <View style={styles.metricGrid}>
@@ -627,15 +686,24 @@ export function FinancesScreen() {
                 <View style={styles.titleIconPill}>
                   <MaterialCommunityIcons name="file-document-outline" size={15} color="#6a1b9a" />
                 </View>
-                <Text style={[styles.cardTitle, { color: colors.text }]}>Contas Fixas</Text>
+                <View>
+                  <Text style={[styles.cardTitle, { color: colors.text }]}>Contas Fixas</Text>
+                  <Text style={[styles.sectionHint, { color: colors.muted }]}>Despesas recorrentes do mês</Text>
+                </View>
               </View>
-              <Text style={[styles.total, { color: colors.primary }]}>Total: {brl(totalContas)}</Text>
+              <View style={styles.sectionHeadRight}>
+                <Text style={[styles.total, { color: colors.primary }]}>Total: {brl(totalContas)}</Text>
+                <View style={styles.countPill}>
+                  <Text style={styles.countPillText}>{contasOperacionais.length} itens</Text>
+                </View>
+              </View>
             </View>
             {contasOperacionais.map((c, idx) => (
               <View
                 key={`c-${idx}`}
                 style={[
                   styles.row,
+                  styles.entryRow,
                   styles.contaRow,
                   {
                     borderBottomColor: colors.border,
@@ -645,7 +713,7 @@ export function FinancesScreen() {
                   getContaStatusMeta(c).tone === 'overdue' && styles.contaRowOverdue,
                 ]}
               >
-                <View style={{ flex: 1 }}>
+                <View style={styles.entryMain}>
                   <Text style={[styles.label, { color: colors.text }]}>{c?.conta || '-'}</Text>
                   <Text
                     style={[
@@ -659,16 +727,20 @@ export function FinancesScreen() {
                     {getContaStatusMeta(c).dueDay ? ` • Vence dia ${getContaStatusMeta(c).dueDay}` : ' • Vencimento nao informado'}
                   </Text>
                 </View>
-                <Text style={[styles.value, { color: colors.text }]}>{brl(c?.valor)}</Text>
-                <Pressable style={[styles.iconBtn, String(c?.status || '').toUpperCase() === 'TRUE' && styles.iconBtnOk]} onPress={() => onToggleConta(c, idx)}>
-                  <MaterialCommunityIcons name={String(c?.status || '').toUpperCase() === 'TRUE' ? 'check-circle' : 'clock-outline'} size={18} color={String(c?.status || '').toUpperCase() === 'TRUE' ? '#fff' : '#6a1b9a'} />
-                </Pressable>
-                <Pressable style={styles.iconBtn} onPress={() => openEditModal('contaFixa', c, idx)}>
-                  <MaterialCommunityIcons name="pencil-outline" size={18} color="#6a1b9a" />
-                </Pressable>
-                <Pressable style={styles.iconBtn} onPress={() => onDeleteEntry('contaFixa', c, idx)}>
-                  <MaterialCommunityIcons name="trash-can-outline" size={17} color="#c62828" />
-                </Pressable>
+                <View style={styles.entryAside}>
+                  <Text style={[styles.value, styles.entryValue, styles.valueEmphasis, { color: colors.text }]}>{brl(c?.valor)}</Text>
+                  <View style={styles.entryActionsRow}>
+                    <Pressable style={[styles.iconBtn, String(c?.status || '').toUpperCase() === 'TRUE' && styles.iconBtnOk]} onPress={() => onToggleConta(c, idx)}>
+                      <MaterialCommunityIcons name={String(c?.status || '').toUpperCase() === 'TRUE' ? 'check-circle' : 'clock-outline'} size={16} color={String(c?.status || '').toUpperCase() === 'TRUE' ? '#fff' : '#6a1b9a'} />
+                    </Pressable>
+                    <Pressable style={styles.iconBtn} onPress={() => openEditModal('contaFixa', c, idx)}>
+                      <MaterialCommunityIcons name="pencil-outline" size={16} color="#6a1b9a" />
+                    </Pressable>
+                    <Pressable style={styles.iconBtn} onPress={() => onDeleteEntry('contaFixa', c, idx)}>
+                      <MaterialCommunityIcons name="trash-can-outline" size={16} color="#c62828" />
+                    </Pressable>
+                  </View>
+                </View>
               </View>
             ))}
             {!contasOperacionais.length && <Text style={[styles.empty, { color: colors.muted }]}>Nenhuma conta fixa encontrada.</Text>}
@@ -686,20 +758,40 @@ export function FinancesScreen() {
                 <View style={styles.titleIconPill}>
                   <MaterialCommunityIcons name="cart-outline" size={15} color="#6a1b9a" />
                 </View>
-                <Text style={[styles.cardTitle, { color: colors.text }]}>Gastos Coletivos</Text>
+                <View>
+                  <Text style={[styles.cardTitle, { color: colors.text }]}>Gastos Coletivos</Text>
+                  <Text style={[styles.sectionHint, { color: colors.muted }]}>Compras e despesas compartilhadas</Text>
+                </View>
               </View>
-              <Text style={[styles.total, { color: colors.primary }]}>Total: {brl(totalColetivos)}</Text>
+              <View style={styles.sectionHeadRight}>
+                <Text style={[styles.total, { color: colors.primary }]}>Total: {brl(totalColetivos)}</Text>
+                <View style={styles.countPill}>
+                  <Text style={styles.countPillText}>{snapshot.gastosColetivos.length} itens</Text>
+                </View>
+              </View>
             </View>
             {(snapshot.gastosColetivos || []).map((g, idx) => (
-              <View key={`g-${idx}`} style={[styles.row, { borderBottomColor: colors.border }]}>
-                <Text style={[styles.label, { color: colors.text }]}>{g?.quem} - {g?.oQue || g?.descricao || '-'}</Text>
-                <Text style={[styles.value, { color: colors.text }]}>{brl(g?.quanto || g?.valor)}</Text>
-                <Pressable style={styles.iconBtn} onPress={() => openEditModal('gastoColetivo', g, idx)}>
-                  <MaterialCommunityIcons name="pencil-outline" size={18} color="#6a1b9a" />
-                </Pressable>
-                <Pressable style={styles.iconBtn} onPress={() => onDeleteEntry('gastoColetivo', g, idx)}>
-                  <MaterialCommunityIcons name="trash-can-outline" size={17} color="#c62828" />
-                </Pressable>
+              <View key={`g-${idx}`} style={[styles.row, styles.entryRow, { borderBottomColor: colors.border }]}>
+                <View style={styles.entryMain}>
+                  <Text style={[styles.label, { color: colors.text }]}>{g?.quem} - {g?.oQue || g?.descricao || '-'}</Text>
+                  {!!String(g?.obs || g?.observacao || '').trim() && (
+                    <View style={[styles.obsChip, { backgroundColor: isDark ? '#2d3342' : '#f1f5f9' }]}>
+                      <MaterialCommunityIcons name="note-text-outline" size={12} color="#64748b" />
+                      <Text style={[styles.obsChipText, { color: colors.text }]}>Obs: {g?.obs || g?.observacao}</Text>
+                    </View>
+                  )}
+                </View>
+                <View style={styles.entryAside}>
+                  <Text style={[styles.value, styles.entryValue, styles.valueEmphasis, { color: colors.text }]}>{brl(g?.quanto || g?.valor)}</Text>
+                  <View style={styles.entryActionsRow}>
+                    <Pressable style={styles.iconBtn} onPress={() => openEditModal('gastoColetivo', g, idx)}>
+                      <MaterialCommunityIcons name="pencil-outline" size={16} color="#6a1b9a" />
+                    </Pressable>
+                    <Pressable style={styles.iconBtn} onPress={() => onDeleteEntry('gastoColetivo', g, idx)}>
+                      <MaterialCommunityIcons name="trash-can-outline" size={16} color="#c62828" />
+                    </Pressable>
+                  </View>
+                </View>
               </View>
             ))}
             {!snapshot.gastosColetivos?.length && <Text style={[styles.empty, { color: colors.muted }]}>Nenhum gasto coletivo encontrado.</Text>}
@@ -717,26 +809,41 @@ export function FinancesScreen() {
                 <View style={styles.titleIconPill}>
                   <MaterialCommunityIcons name="handshake-outline" size={15} color="#6a1b9a" />
                 </View>
-                <Text style={[styles.cardTitle, { color: colors.text }]}>Acertos Individuais</Text>
+                <View>
+                  <Text style={[styles.cardTitle, { color: colors.text }]}>Acertos Individuais</Text>
+                  <Text style={[styles.sectionHint, { color: colors.muted }]}>Quem deve e quem recebe</Text>
+                </View>
               </View>
-              <Text style={[styles.total, { color: colors.primary }]}>Total: {brl(totalAcertos)}</Text>
+              <View style={styles.sectionHeadRight}>
+                <Text style={[styles.total, { color: colors.primary }]}>Total: {brl(totalAcertos)}</Text>
+                <View style={styles.countPill}>
+                  <Text style={styles.countPillText}>{snapshot.acertosIndividuais.length} itens</Text>
+                </View>
+              </View>
             </View>
             {(snapshot.acertosIndividuais || []).map((a, idx) => (
-              <View key={`a-${idx}`} style={[styles.row, { borderBottomColor: colors.border }]}>
-                <View style={{ flex: 1 }}>
+              <View key={`a-${idx}`} style={[styles.row, styles.entryRow, { borderBottomColor: colors.border }]}>
+                <View style={styles.entryMain}>
                   <Text style={[styles.label, { color: colors.text }]}>Deve: {a?.quem || '-'}</Text>
                   <Text style={[styles.rentHint, { color: colors.muted }]}>Emprestou: {a?.paraQuem || '-'}</Text>
                   {!!String(a?.obs || a?.observacao || '').trim() && (
-                    <Text style={[styles.rentHint, { color: colors.muted }]}>Obs: {a?.obs || a?.observacao}</Text>
+                    <View style={[styles.obsChip, { backgroundColor: isDark ? '#2d3342' : '#f1f5f9' }]}>
+                      <MaterialCommunityIcons name="note-text-outline" size={12} color="#64748b" />
+                      <Text style={[styles.obsChipText, { color: colors.text }]}>Obs: {a?.obs || a?.observacao}</Text>
+                    </View>
                   )}
                 </View>
-                <Text style={[styles.value, { color: colors.text }]}>{brl(a?.deveQuanto || a?.valor)}</Text>
-                <Pressable style={styles.iconBtn} onPress={() => openEditModal('acertoIndividual', a, idx)}>
-                  <MaterialCommunityIcons name="pencil-outline" size={18} color="#6a1b9a" />
-                </Pressable>
-                <Pressable style={styles.iconBtn} onPress={() => onDeleteEntry('acertoIndividual', a, idx)}>
-                  <MaterialCommunityIcons name="trash-can-outline" size={17} color="#c62828" />
-                </Pressable>
+                <View style={styles.entryAside}>
+                  <Text style={[styles.value, styles.entryValue, styles.valueEmphasis, { color: colors.text }]}>{brl(a?.deveQuanto || a?.valor)}</Text>
+                  <View style={styles.entryActionsRow}>
+                    <Pressable style={styles.iconBtn} onPress={() => openEditModal('acertoIndividual', a, idx)}>
+                      <MaterialCommunityIcons name="pencil-outline" size={16} color="#6a1b9a" />
+                    </Pressable>
+                    <Pressable style={styles.iconBtn} onPress={() => onDeleteEntry('acertoIndividual', a, idx)}>
+                      <MaterialCommunityIcons name="trash-can-outline" size={16} color="#c62828" />
+                    </Pressable>
+                  </View>
+                </View>
               </View>
             ))}
             {!snapshot.acertosIndividuais?.length && <Text style={[styles.empty, { color: colors.muted }]}>Nenhum acerto individual encontrado.</Text>}
@@ -774,7 +881,7 @@ export function FinancesScreen() {
                     {!contasOperacionais.length && (
                       <Text style={[styles.helper, { color: colors.muted, marginBottom: 8 }]}>Nenhuma conta fixa cadastrada para selecionar.</Text>
                     )}
-                    <TextInput value={form.valor} onChangeText={(v) => setForm((p) => ({ ...p, valor: v }))} style={styles.input} placeholder="Valor" keyboardType="decimal-pad" placeholderTextColor="#94a3b8" />
+                    <TextInput value={form.valor} onChangeText={(v) => setForm((p) => ({ ...p, valor: formatMoneyInput(v) }))} style={styles.input} placeholder="Valor" keyboardType="decimal-pad" placeholderTextColor="#94a3b8" />
                     <Pressable style={styles.statusToggle} onPress={() => setForm((p) => ({ ...p, status: !p.status }))}>
                       <MaterialCommunityIcons name={form.status ? 'check-circle' : 'clock-outline'} size={17} color={form.status ? '#16a34a' : '#6a1b9a'} />
                       <Text style={[styles.label, { color: colors.text }]}>{form.status ? 'Conta paga' : 'Conta pendente'}</Text>
@@ -821,7 +928,7 @@ export function FinancesScreen() {
                         })}
                     </ScrollView>
                     <TextInput value={form.oQue} onChangeText={(v) => setForm((p) => ({ ...p, oQue: v }))} style={styles.input} placeholder="Descrição" placeholderTextColor="#94a3b8" />
-                    <TextInput value={form.quanto} onChangeText={(v) => setForm((p) => ({ ...p, quanto: v }))} style={styles.input} placeholder="Valor" keyboardType="decimal-pad" placeholderTextColor="#94a3b8" />
+                    <TextInput value={form.quanto} onChangeText={(v) => setForm((p) => ({ ...p, quanto: formatMoneyInput(v) }))} style={styles.input} placeholder="Valor" keyboardType="decimal-pad" placeholderTextColor="#94a3b8" />
                     <Text style={[styles.helper, { color: colors.muted, marginBottom: 6 }]}>
                       Divisao atual: {Math.max(1, 1 + (form.dividirCom || []).length)} pessoas •{' '}
                       {brl(toNumber(form.quanto) / Math.max(1, 1 + (form.dividirCom || []).length))} por pessoa
@@ -881,7 +988,7 @@ export function FinancesScreen() {
                           );
                         })}
                     </ScrollView>
-                    <TextInput value={form.deveQuanto} onChangeText={(v) => setForm((p) => ({ ...p, deveQuanto: v }))} style={styles.input} placeholder="Valor" keyboardType="decimal-pad" placeholderTextColor="#94a3b8" />
+                    <TextInput value={form.deveQuanto} onChangeText={(v) => setForm((p) => ({ ...p, deveQuanto: formatMoneyInput(v) }))} style={styles.input} placeholder="Valor" keyboardType="decimal-pad" placeholderTextColor="#94a3b8" />
                     <Text style={[styles.helper, { color: colors.muted, marginBottom: 6 }]}>
                       Divisao do emprestimo: {Math.max(1, 1 + (form.quemMulti || []).length)} devedor(es) •{' '}
                       {brl(toNumber(form.deveQuanto) / Math.max(1, 1 + (form.quemMulti || []).length))} por devedor
@@ -903,16 +1010,16 @@ export function FinancesScreen() {
         <MaterialCommunityIcons name="plus" size={24} color="#fff" />
       </Pressable>
 
-      <Modal visible={quickCreateVisible} transparent animationType="fade" onRequestClose={() => setQuickCreateVisible(false)}>
+          <Modal visible={quickCreateVisible} transparent animationType="fade" onRequestClose={() => setQuickCreateVisible(false)}>
         <View style={styles.quickOverlay}>
-          <View style={styles.quickSheet}>
+              <View style={[styles.quickSheet, { backgroundColor: colors.surface }]}>
             <View style={styles.quickHead}>
-              <Text style={styles.quickTitle}>Novo lancamento</Text>
+                  <Text style={[styles.quickTitle, { color: colors.text }]}>Novo lancamento</Text>
               <Pressable style={styles.quickCloseBtn} onPress={() => setQuickCreateVisible(false)}>
                 <MaterialCommunityIcons name="close" size={18} color="#6a1b9a" />
               </Pressable>
             </View>
-            <Text style={styles.quickSubtitle}>Escolha o tipo para enviar na planilha</Text>
+                <Text style={[styles.quickSubtitle, { color: colors.muted }]}>Escolha o tipo para enviar na planilha</Text>
             <Pressable style={styles.quickOption} onPress={openContaPickerFromFab}>
               <View style={styles.quickOptionIcon}>
                 <MaterialCommunityIcons name="playlist-edit" size={16} color="#6a1b9a" />
@@ -1102,13 +1209,13 @@ export function FinancesScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  content: { padding: 16, gap: 12, paddingBottom: 32 },
-  kpiStrip: { flexDirection: 'row', gap: 8 },
-  kpiPill: { flex: 1, borderRadius: 14, paddingVertical: 9, paddingHorizontal: 10, borderWidth: 1, borderColor: 'rgba(106,27,154,0.08)' },
+  content: { padding: 16, gap: 14, paddingBottom: 36 },
+  kpiStrip: { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
+  kpiPill: { flexGrow: 1, minWidth: '31%', borderRadius: 14, paddingVertical: 10, paddingHorizontal: 10, borderWidth: 1, borderColor: 'rgba(106,27,154,0.12)' },
   kpiPillLabel: { fontSize: 10, fontWeight: '700' },
   kpiPillValue: { fontSize: 12, fontWeight: '900', marginTop: 2 },
-  heroCard: { borderRadius: 20, borderWidth: 1, padding: 15, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 2 },
-  highlightCard: { borderRadius: 20, borderWidth: 1.5, padding: 14, shadowColor: '#6a1b9a', shadowOpacity: 0.16, shadowRadius: 12, shadowOffset: { width: 0, height: 6 }, elevation: 6 },
+  heroCard: { borderRadius: 20, borderWidth: 1, padding: 15, shadowColor: '#0f172a', shadowOpacity: 0.07, shadowRadius: 11, shadowOffset: { width: 0, height: 4 }, elevation: 3 },
+  highlightCard: { borderRadius: 20, borderWidth: 1.5, padding: 14, shadowColor: '#6a1b9a', shadowOpacity: 0.2, shadowRadius: 14, shadowOffset: { width: 0, height: 7 }, elevation: 7 },
   highlightTitle: { fontSize: 18, fontWeight: '900', letterSpacing: 0.2 },
   previewSubTitle: { fontSize: 11, fontWeight: '600', marginTop: 2 },
   previewResidentCard: { borderWidth: 1, borderRadius: 14, paddingHorizontal: 10, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 8, backgroundColor: 'rgba(106,27,154,0.03)' },
@@ -1121,13 +1228,15 @@ const styles = StyleSheet.create({
   previewFooter: { marginTop: 2, paddingTop: 10, borderTopWidth: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   previewFooterLabel: { fontSize: 11, fontWeight: '700' },
   previewFooterValue: { fontSize: 13, fontWeight: '900' },
-  liveBadge: { fontSize: 11, fontWeight: '900', textTransform: 'uppercase' },
-  titleRow: { flexDirection: 'row', alignItems: 'center', gap: 7 },
+  livePill: { borderRadius: 999, backgroundColor: '#f3e8ff', paddingHorizontal: 8, paddingVertical: 4, flexDirection: 'row', alignItems: 'center', gap: 4 },
+  liveBadge: { fontSize: 10, fontWeight: '900', textTransform: 'uppercase' },
+  titleRow: { flexDirection: 'row', alignItems: 'center', gap: 7, flex: 1, minWidth: 0 },
   titleIconPill: { width: 24, height: 24, borderRadius: 999, backgroundColor: '#f3e5f5', alignItems: 'center', justifyContent: 'center' },
   heroLabel: { fontSize: 12, fontWeight: '700' },
-  heroValue: { fontSize: 28, fontWeight: '900', marginTop: 2, marginBottom: 10, letterSpacing: -0.5 },
-  heroRow: { flexDirection: 'row', gap: 6 },
-  metricPill: { flex: 1, borderRadius: 10, paddingVertical: 7, paddingHorizontal: 8 },
+  heroSubLabel: { fontSize: 10, fontWeight: '600', marginTop: 1 },
+  heroValue: { fontSize: 30, fontWeight: '900', marginTop: 4, marginBottom: 12, letterSpacing: -0.6 },
+  heroRow: { flexDirection: 'row', gap: 6, flexWrap: 'wrap' },
+  metricPill: { flexGrow: 1, minWidth: '31%', borderRadius: 10, paddingVertical: 8, paddingHorizontal: 8 },
   metricText: { fontSize: 10, fontWeight: '800' },
   metricGrid: { flexDirection: 'row', gap: 8, marginBottom: 8 },
   metricBox: { flex: 1, borderWidth: 1, borderRadius: 10, padding: 9 },
@@ -1150,24 +1259,36 @@ const styles = StyleSheet.create({
   },
   subtitle: { marginTop: 4, fontSize: 12, fontWeight: '600' },
   helper: { marginTop: 2, fontSize: 11, fontWeight: '500' },
+  syncPill: { marginTop: 7, alignSelf: 'flex-start', borderRadius: 999, paddingHorizontal: 9, paddingVertical: 4, flexDirection: 'row', alignItems: 'center', gap: 4 },
+  syncPillText: { color: '#2e7d32', fontSize: 10, fontWeight: '800' },
   themeBtn: { borderRadius: 12, paddingHorizontal: 10, paddingVertical: 8, flexDirection: 'row', gap: 6, alignItems: 'center' },
   themeBtnText: { fontSize: 12, fontWeight: '700' },
   card: { borderRadius: 16, borderWidth: 1, padding: 13 },
-  sectionCard: { shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 7, shadowOffset: { width: 0, height: 3 }, elevation: 1 },
-  cardHead: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 },
+  sectionCard: { shadowColor: '#0f172a', shadowOpacity: 0.055, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 2 },
+  cardHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10, marginBottom: 9, flexWrap: 'wrap' },
   cardTitle: { fontSize: 14, fontWeight: '800' },
+  sectionHint: { marginTop: 2, fontSize: 10, fontWeight: '600' },
+  sectionHeadRight: { alignItems: 'flex-end', gap: 4, marginLeft: 'auto' },
+  countPill: { borderRadius: 999, backgroundColor: '#f3e8ff', paddingHorizontal: 8, paddingVertical: 3 },
+  countPillText: { color: '#6a1b9a', fontSize: 10, fontWeight: '800' },
   total: { fontSize: 13, fontWeight: '800' },
-  row: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 9, borderBottomWidth: 1 },
-  contaRow: { borderRadius: 12, paddingHorizontal: 10, marginBottom: 6, borderWidth: 1 },
+  row: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 10, borderBottomWidth: 1 },
+  entryRow: { alignItems: 'flex-start', gap: 10 },
+  entryMain: { flex: 1, minWidth: 0 },
+  entryAside: { minWidth: 96, maxWidth: 126, alignItems: 'flex-end', gap: 6 },
+  entryActionsRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 1 },
+  entryValue: { fontSize: 13, fontWeight: '900' },
+  valueEmphasis: { fontSize: 15, letterSpacing: -0.2 },
+  contaRow: { borderRadius: 12, paddingHorizontal: 10, marginBottom: 6, borderWidth: 1, borderBottomWidth: 1 },
   contaRowPaid: { backgroundColor: '#ecfdf3', borderColor: '#86efac' },
   contaRowPending: { backgroundColor: '#fff7ed', borderColor: '#fed7aa' },
   contaRowOverdue: { backgroundColor: '#fef2f2', borderColor: '#fecaca' },
-  label: { flex: 1, paddingRight: 8, fontSize: 12, fontWeight: '600' },
-  value: { fontSize: 12, fontWeight: '800' },
-  fixedSplitRow: { marginTop: 8, borderTopWidth: 1, borderTopColor: '#e5e7eb', paddingTop: 10 },
+  label: { flex: 1, paddingRight: 8, fontSize: 12, fontWeight: '600', lineHeight: 17 },
+  value: { fontSize: 12, fontWeight: '800', textAlign: 'right' },
+  fixedSplitRow: { marginTop: 8, borderTopWidth: 1, borderTopColor: '#e5e7eb', paddingTop: 11 },
   fixedSplitLabel: { color: '#6a1b9a', fontWeight: '800' },
   fixedSplitValue: { color: '#4a148c', fontSize: 13, fontWeight: '900' },
-  iconBtn: { width: 30, height: 30, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: '#f3e5f5', marginLeft: 6 },
+  iconBtn: { width: 30, height: 30, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: '#f3e5f5', marginLeft: 0, flexShrink: 0, borderWidth: 1, borderColor: 'rgba(106,27,154,0.12)' },
   iconBtnOk: { backgroundColor: '#16a34a' },
   error: { color: '#ef4444', fontWeight: '700', marginBottom: 4 },
   retryBtn: { alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#6a1b9a', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 7, marginBottom: 8 },
@@ -1175,11 +1296,14 @@ const styles = StyleSheet.create({
   rentItem: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 9, borderBottomWidth: 1 },
   rentItemStrong: { paddingVertical: 11 },
   rentAvatar: { width: 28, height: 28, borderRadius: 14, backgroundColor: '#6a1b9a', alignItems: 'center', justifyContent: 'center' },
+  rentAvatarPhoto: { width: 28, height: 28, borderRadius: 14, backgroundColor: '#fff' },
   rentAvatarStrong: { width: 34, height: 34, borderRadius: 17 },
   rentAvatarText: { color: '#fff', fontSize: 11, fontWeight: '800' },
   labelStrong: { flex: 1, paddingRight: 8, fontSize: 13, fontWeight: '800' },
   valueStrong: { fontSize: 14, fontWeight: '900' },
   rentHint: { fontSize: 11, fontWeight: '600' },
+  obsChip: { marginTop: 5, borderRadius: 9, paddingHorizontal: 8, paddingVertical: 6, flexDirection: 'row', alignItems: 'flex-start', gap: 5 },
+  obsChipText: { fontSize: 11, fontWeight: '700', lineHeight: 15, flex: 1 },
   contaHintPaid: { color: '#166534' },
   contaHintPending: { color: '#b45309' },
   contaHintOverdue: { color: '#b91c1c' },
@@ -1187,7 +1311,7 @@ const styles = StyleSheet.create({
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' },
   modalCard: { borderTopLeftRadius: 22, borderTopRightRadius: 22, padding: 16, paddingBottom: 24 },
   modalHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  input: { borderWidth: 1, borderColor: '#d1d5db', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, marginBottom: 8, color: '#111827', fontWeight: '600' },
+  input: { borderWidth: 1, borderColor: '#d1d5db', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, marginBottom: 8, color: '#111827', fontWeight: '600', backgroundColor: '#fff' },
   fieldLabel: { fontSize: 11, fontWeight: '700', marginBottom: 6, marginTop: 2 },
   nameChipRow: { gap: 8, paddingBottom: 8, marginBottom: 2 },
   nameChip: { borderWidth: 1, borderColor: '#d1d5db', backgroundColor: '#fff', borderRadius: 999, paddingHorizontal: 12, paddingVertical: 7 },
@@ -1195,7 +1319,7 @@ const styles = StyleSheet.create({
   nameChipText: { color: '#374151', fontSize: 11, fontWeight: '800' },
   nameChipTextActive: { color: '#fff' },
   statusToggle: { flexDirection: 'row', alignItems: 'center', gap: 8, borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 10, padding: 10, marginBottom: 8 },
-  saveBtn: { backgroundColor: '#6a1b9a', borderRadius: 12, paddingVertical: 12, alignItems: 'center', marginTop: 4 },
+  saveBtn: { backgroundColor: '#6a1b9a', borderRadius: 12, paddingVertical: 12, alignItems: 'center', marginTop: 6, shadowColor: '#6a1b9a', shadowOpacity: 0.28, shadowRadius: 8, shadowOffset: { width: 0, height: 4 }, elevation: 3 },
   saveBtnText: { color: '#fff', fontWeight: '800' },
   statementRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#e5e7eb' },
   fabLeft: {
@@ -1215,12 +1339,12 @@ const styles = StyleSheet.create({
     elevation: 8,
   },
   quickOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'flex-end' },
-  quickSheet: { backgroundColor: '#fff', borderTopLeftRadius: 22, borderTopRightRadius: 22, padding: 16, paddingBottom: 24, gap: 10 },
+  quickSheet: { borderTopLeftRadius: 22, borderTopRightRadius: 22, padding: 16, paddingBottom: 24, gap: 10, borderTopWidth: 1, borderColor: 'rgba(106,27,154,0.14)' },
   quickHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  quickTitle: { color: '#111827', fontSize: 16, fontWeight: '800' },
-  quickSubtitle: { color: '#6b7280', fontSize: 12, fontWeight: '600', marginTop: -4 },
+  quickTitle: { fontSize: 16, fontWeight: '800' },
+  quickSubtitle: { fontSize: 12, fontWeight: '600', marginTop: -4 },
   quickCloseBtn: { width: 30, height: 30, borderRadius: 999, alignItems: 'center', justifyContent: 'center', backgroundColor: '#f3e5f5' },
-  quickOption: { borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 14, padding: 12, flexDirection: 'row', alignItems: 'center', gap: 10 },
+  quickOption: { borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 14, padding: 12, flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: 'rgba(106,27,154,0.03)' },
   quickOptionIcon: { width: 32, height: 32, borderRadius: 10, backgroundColor: '#f3e8ff', alignItems: 'center', justifyContent: 'center' },
   quickOptionTitle: { color: '#111827', fontSize: 13, fontWeight: '800' },
   quickOptionText: { color: '#6b7280', fontSize: 11, fontWeight: '600', marginTop: 2 },

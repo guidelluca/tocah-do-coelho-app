@@ -3,7 +3,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-export function AppHeader({ title = 'República Tocah', subtitle = '', onBellPress }) {
+export function AppHeader({ title = 'República Tocah', subtitle = '', onBellPress, notificationCount = 0 }) {
   const insets = useSafeAreaInsets();
   const contextLine = subtitle || title;
   return (
@@ -28,6 +28,11 @@ export function AppHeader({ title = 'República Tocah', subtitle = '', onBellPre
       </View>
       <Pressable style={styles.bell} onPress={onBellPress}>
         <MaterialCommunityIcons name="bell-outline" size={20} color="#fff" />
+        {notificationCount > 0 && (
+          <View style={styles.badge}>
+            <Text style={styles.badgeText}>{notificationCount > 99 ? '99+' : String(notificationCount)}</Text>
+          </View>
+        )}
       </Pressable>
     </LinearGradient>
   );
@@ -72,5 +77,24 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'rgba(255,255,255,0.08)',
+  },
+  badge: {
+    position: 'absolute',
+    right: -6,
+    top: -6,
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    paddingHorizontal: 4,
+    backgroundColor: '#ef4444',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#fff',
+  },
+  badgeText: {
+    color: '#fff',
+    fontSize: 9,
+    fontWeight: '900',
   },
 });

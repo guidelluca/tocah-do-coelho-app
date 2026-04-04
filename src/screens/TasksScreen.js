@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, Modal, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, Image, Modal, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { concluirTarefa, getEscalaSemana, getTaskRatings, rateTask } from '../services/api';
 import { useThemeMode } from '../context/ThemeContext';
@@ -8,6 +8,7 @@ import { AppHeader } from '../components/AppHeader';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { useResident } from '../context/ResidentContext';
+const IMAGE_MEDIA_TYPES = ImagePicker.MediaType?.Images || 'images';
 const getAvatarInitial = (value) => {
   const cleaned = String(value ?? '').trim();
   if (!cleaned) return '•';
@@ -16,7 +17,7 @@ const getAvatarInitial = (value) => {
 
 export function TasksScreen() {
   const { isDark } = useThemeMode();
-  const { resident } = useResident();
+  const { resident, getResidentPhoto } = useResident();
   const colors = isDark ? darkTheme : lightTheme;
   const [escala, setEscala] = useState([]);
   const [checked, setChecked] = useState({});
@@ -42,7 +43,7 @@ export function TasksScreen() {
       quality: 0.25,
       allowsEditing: true,
       base64: true,
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      mediaTypes: IMAGE_MEDIA_TYPES,
     });
     if (result.canceled || !result.assets?.[0]?.base64) return '';
     return `data:image/jpeg;base64,${result.assets[0].base64}`;
@@ -121,9 +122,13 @@ export function TasksScreen() {
           const banheiraoStat = stat?.banheirao || { media: 0, total: 0 };
           return (
             <View key={`${item.nome}-${idx}`} style={[styles.item, { backgroundColor: isDark ? '#1f2430' : '#fafafa' }, done && styles.itemDone]}>
-              <View style={[styles.avatar, done && styles.avatarDone]}>
-                <Text style={styles.avatarText}>{getAvatarInitial(item.nome)}</Text>
-              </View>
+              {getResidentPhoto(item.nome) ? (
+                <Image source={{ uri: getResidentPhoto(item.nome) }} style={[styles.avatarPhoto, done && styles.avatarDone]} />
+              ) : (
+                <View style={[styles.avatar, done && styles.avatarDone]}>
+                  <Text style={styles.avatarText}>{getAvatarInitial(item.nome)}</Text>
+                </View>
+              )}
               <View style={{ flex: 1 }}>
                 <Text style={[styles.itemName, { color: colors.text }]}>{item.nome}</Text>
                 <Text style={[styles.itemTask, { color: colors.muted }]}>{item.tarefa}</Text>
@@ -269,6 +274,7 @@ const styles = StyleSheet.create({
   progressPill: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 5 },
   progressText: { fontSize: 11, fontWeight: '800' },
   avatar: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center', backgroundColor: '#6a1b9a' },
+  avatarPhoto: { width: 34, height: 34, borderRadius: 17, backgroundColor: '#fff' },
   avatarDone: { backgroundColor: '#00c853' },
   avatarText: { color: '#fff', fontSize: 12, fontWeight: '800' },
   rateBtn: { width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: '#f3e5f5' },

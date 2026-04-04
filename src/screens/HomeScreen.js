@@ -8,6 +8,7 @@ import { darkTheme, lightTheme } from '../constants/theme';
 import { addCaixinhaEntry, concluirTarefa, getApiDebugInfo, getCaixinha, getCaixinhaStatement, getDados, getFinanceSnapshot, getTarefaSemana, setPreferredApiBase } from '../services/api';
 import { AppHeader } from '../components/AppHeader';
 import { useResident } from '../context/ResidentContext';
+import { useNotifications } from '../context/NotificationContext';
 import { formatMonthReference } from '../utils/dateLabel';
 const API_URL_DEBUG = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:4000/api';
 const HOME_HERO_IMAGE_URLS = [
@@ -15,6 +16,7 @@ const HOME_HERO_IMAGE_URLS = [
   'https://drive.google.com/uc?export=view&id=1GLeZgJ8o3l5Gvp8j5_W42Ld3f-puR2aQ',
   'https://drive.google.com/thumbnail?id=1GLeZgJ8o3l5Gvp8j5_W42Ld3f-puR2aQ&sz=w1600',
 ];
+const IMAGE_MEDIA_TYPES = ImagePicker.MediaType?.Images || 'images';
 
 function toNumber(value) {
   const raw = String(value ?? '').trim();
@@ -39,10 +41,24 @@ const getAvatarInitial = (value) => {
   return cleaned.slice(0, 1).toUpperCase();
 };
 
+function formatNotificationTime(iso) {
+  const dt = new Date(String(iso || ''));
+  if (Number.isNaN(dt.getTime())) return '';
+  return dt.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+}
+
+function getNotificationMeta(item) {
+  const type = String(item?.type || '').toLowerCase();
+  if (type === 'check') return { icon: 'checkbox-marked-circle-outline', color: '#16a34a', title: 'Tarefa concluída' };
+  if (type === 'rating') return { icon: 'star-circle-outline', color: '#f59e0b', title: 'Nova avaliação' };
+  return { icon: 'message-reply-text-outline', color: '#0ea5e9', title: 'Nova publicação' };
+}
+
 export function HomeScreen() {
   const navigation = useNavigation();
   const { isDark } = useThemeMode();
-  const { resident, selectResident, residents } = useResident();
+  const { resident, selectResident, residents, getResidentPhoto } = useResident();
+  const { notificationCount, notificationItems, markNotificationsAsSeen, refreshNotifications } = useNotifications();
   const colors = isDark ? darkTheme : lightTheme;
   const [snapshot, setSnapshot] = useState({ mesReferencia: '', residents: [] });
   const [caixinha, setCaixinha] = useState({ saldo: '0,00' });
@@ -63,6 +79,7 @@ export function HomeScreen() {
   const [rentDetailVisible, setRentDetailVisible] = useState(false);
   const [rentDetailResident, setRentDetailResident] = useState(null);
   const [taskPosting, setTaskPosting] = useState(false);
+  const [notificationModalVisible, setNotificationModalVisible] = useState(false);
 
   const takeTaskProofPhoto = async () => {
     const permission = await ImagePicker.requestCameraPermissionsAsync();
@@ -74,7 +91,7 @@ export function HomeScreen() {
       quality: 0.25,
       allowsEditing: true,
       base64: true,
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      mediaTypes: IMAGE_MEDIA_TYPES,
     });
     if (result.canceled || !result.assets?.[0]?.base64) return '';
     return `data:image/jpeg;base64,${result.assets[0].base64}`;
@@ -168,6 +185,10 @@ export function HomeScreen() {
     load();
   }, [resident]);
 
+  useEffect(() => {
+    refreshNotifications();
+  }, [resident]);
+
   useFocusEffect(
     useCallback(() => {
       load('silent');
@@ -241,7 +262,11 @@ export function HomeScreen() {
       <AppHeader
         title="República Tocah"
         subtitle={`Morador: ${resident} • ${formatMonthReference(snapshot.mesReferencia)}`}
-        onBellPress={() => Alert.alert('Avisos', 'Nenhum aviso pendente no momento.')}
+        notificationCount={notificationCount}
+        onBellPress={async () => {
+          setNotificationModalVisible(true);
+          await markNotificationsAsSeen();
+        }}
       />
       <View style={styles.visibilityRow}>
         <Pressable style={styles.visibilityBtn} onPress={() => setValuesVisible((prev) => !prev)}>
@@ -368,9 +393,13 @@ export function HomeScreen() {
         </View>
 
         <View style={styles.taskBodyRow}>
-          <View style={styles.taskAvatar}>
-            <Text style={styles.taskAvatarText}>{getAvatarInitial(resident)}</Text>
-          </View>
+          {getResidentPhoto(resident) ? (
+            <Image source={{ uri: getResidentPhoto(resident) }} style={styles.taskAvatarPhoto} />
+          ) : (
+            <View style={styles.taskAvatar}>
+              <Text style={styles.taskAvatarText}>{getAvatarInitial(resident)}</Text>
+            </View>
+          )}
           <View style={{ flex: 1 }}>
             <Text style={[styles.rowLabel, { color: colors.text }]}>{tarefa.tarefaNome}</Text>
             <Text style={[styles.subtitle, { color: colors.muted, marginTop: 2 }]}>Responsavel: {resident}</Text>
@@ -411,9 +440,13 @@ export function HomeScreen() {
         {(snapshot.residents || []).map((r) => (
           <Pressable key={r.nome} style={[styles.row, { borderBottomColor: colors.border }]} onPress={() => openRentDetail(r.nome)}>
             <View style={styles.rowUser}>
-              <View style={styles.rowAvatar}>
-                <Text style={styles.rowAvatarText}>{getAvatarInitial(r.nome)}</Text>
-              </View>
+              {getResidentPhoto(r.nome) ? (
+                <Image source={{ uri: getResidentPhoto(r.nome) }} style={styles.rowAvatarPhoto} />
+              ) : (
+                <View style={styles.rowAvatar}>
+                  <Text style={styles.rowAvatarText}>{getAvatarInitial(r.nome)}</Text>
+                </View>
+              )}
               <Text style={[styles.rowLabel, { color: colors.text }]}>{r.nome}</Text>
             </View>
             <Text style={[styles.rowValue, { color: colors.text }]}>{maskValue(r.total)}</Text>
@@ -500,6 +533,50 @@ export function HomeScreen() {
           </View>
         </View>
       </Modal>
+
+      <Modal visible={notificationModalVisible} animationType="slide" transparent onRequestClose={() => setNotificationModalVisible(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalCard, { backgroundColor: colors.surface }]}>
+            <View style={styles.modalHeader}>
+              <Text style={[styles.sectionTitle, { color: colors.text, marginBottom: 0 }]}>Notificações</Text>
+              <Pressable onPress={() => setNotificationModalVisible(false)} style={styles.closeBtn}>
+                <MaterialCommunityIcons name="close" size={18} color="#6a1b9a" />
+              </Pressable>
+            </View>
+            <Text style={[styles.subtitle, { color: colors.muted, marginTop: 0 }]}>
+              {notificationItems.filter((item) => item.isUnread).length > 0
+                ? `${notificationItems.filter((item) => item.isUnread).length} nova(s) atualização(ões)`
+                : 'Sem novidades não lidas agora'}
+            </Text>
+            <ScrollView style={{ maxHeight: 320 }} contentContainerStyle={{ paddingBottom: 8, marginTop: 8 }}>
+              {notificationItems.map((item, idx) => {
+                const meta = getNotificationMeta(item);
+                return (
+                  <View
+                    key={`${item.ts}-${idx}`}
+                    style={[
+                      styles.statementRow,
+                      item.isUnread && { backgroundColor: '#f5f3ff', borderRadius: 10, paddingHorizontal: 8 },
+                    ]}
+                  >
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
+                      <MaterialCommunityIcons name={meta.icon} size={16} color={meta.color} />
+                      <View style={{ flex: 1 }}>
+                        <Text style={[styles.rowLabel, { color: colors.text }]}>{meta.title}</Text>
+                        <Text style={[styles.subtitle, { color: colors.muted, marginTop: 0 }]}>
+                          {item.actor || 'Morador'} • {item.content || item.tarefa || 'Atualização da casa'}
+                        </Text>
+                      </View>
+                    </View>
+                    <Text style={[styles.subtitle, { color: colors.muted, marginTop: 0 }]}>{formatNotificationTime(item.ts)}</Text>
+                  </View>
+                );
+              })}
+              {!notificationItems.length && <Text style={[styles.subtitle, { color: colors.muted }]}>Nenhuma notificação disponível.</Text>}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </ScrollView>
   );
 }
@@ -526,6 +603,7 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 8, borderBottomWidth: 1 },
   rowUser: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   rowAvatar: { width: 24, height: 24, borderRadius: 12, backgroundColor: '#6a1b9a', alignItems: 'center', justifyContent: 'center' },
+  rowAvatarPhoto: { width: 24, height: 24, borderRadius: 12, backgroundColor: '#fff' },
   rowAvatarText: { color: '#fff', fontSize: 10, fontWeight: '800' },
   rowLabel: { fontSize: 13, fontWeight: '600' },
   rowValue: { fontSize: 13, fontWeight: '800' },
@@ -571,6 +649,7 @@ const styles = StyleSheet.create({
   taskStatusTextDone: { color: '#166534' },
   taskBodyRow: { flexDirection: 'row', gap: 10, alignItems: 'center' },
   taskAvatar: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#6a1b9a', alignItems: 'center', justifyContent: 'center' },
+  taskAvatarPhoto: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#fff' },
   taskAvatarText: { color: '#fff', fontSize: 13, fontWeight: '800' },
   taskActionBtn: { marginTop: 12, backgroundColor: '#6a1b9a', borderRadius: 12, paddingVertical: 11, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7 },
   taskActionBtnDone: { backgroundColor: '#dcfce7' },
