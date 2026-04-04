@@ -3,6 +3,7 @@ import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useThemeMode } from '../context/ThemeContext';
 
 const TOCAH_LOGO_SOURCES = [
   { uri: 'https://drive.google.com/uc?export=download&id=1K-KUlO4ZNy5TFz1YIsVh__uxICixnkBS' },
@@ -13,6 +14,7 @@ const TOCAH_LOGO_SOURCES = [
 
 export function AppHeader({ title = 'República Tocah', subtitle = '', onBellPress, notificationCount = 0 }) {
   const insets = useSafeAreaInsets();
+  const { isDark, toggleTheme } = useThemeMode();
   const [logoSourceIdx, setLogoSourceIdx] = useState(0);
   const contextLine = subtitle || title;
   return (
@@ -42,14 +44,19 @@ export function AppHeader({ title = 'República Tocah', subtitle = '', onBellPre
           {!!contextLine && <Text style={styles.contextText} numberOfLines={1}>{contextLine}</Text>}
         </View>
       </View>
-      <Pressable style={styles.bell} onPress={onBellPress}>
-        <MaterialCommunityIcons name="bell-outline" size={20} color="#fff" />
-        {notificationCount > 0 && (
-          <View style={styles.badge}>
-            <Text style={styles.badgeText}>{notificationCount > 99 ? '99+' : String(notificationCount)}</Text>
-          </View>
-        )}
-      </Pressable>
+      <View style={styles.rightActions}>
+        <Pressable style={styles.themeBtn} onPress={toggleTheme}>
+          <MaterialCommunityIcons name={isDark ? 'white-balance-sunny' : 'moon-waning-crescent'} size={17} color="#fff" />
+        </Pressable>
+        <Pressable style={styles.bell} onPress={onBellPress}>
+          <MaterialCommunityIcons name="bell-outline" size={20} color="#fff" />
+          {notificationCount > 0 && (
+            <View style={styles.badge}>
+              <Text style={styles.badgeText}>{notificationCount > 99 ? '99+' : String(notificationCount)}</Text>
+            </View>
+          )}
+        </Pressable>
+      </View>
     </LinearGradient>
   );
 }
@@ -85,6 +92,17 @@ const styles = StyleSheet.create({
   logoFallback: { width: '100%', height: '100%', alignItems: 'center', justifyContent: 'center', backgroundColor: '#f3e8ff' },
   houseTitle: { color: '#fff', fontSize: 20, lineHeight: 22, fontWeight: '900', letterSpacing: 0.1 },
   contextText: { color: 'rgba(255,255,255,0.9)', fontSize: 13, marginTop: 2, fontWeight: '700' },
+  rightActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  themeBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.35)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.08)',
+  },
   bell: {
     width: 36,
     height: 36,

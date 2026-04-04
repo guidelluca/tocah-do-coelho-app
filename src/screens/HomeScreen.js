@@ -117,7 +117,24 @@ export function HomeScreen() {
       }
       if (dadosRes.status === 'fulfilled') {
         const dados = dadosRes.value || {};
-        setMeuResumo({ aluguel: dados.aluguel || '--', mesReferencia: dados.mesReferencia || '' });
+        let aluguelResolved = dados.aluguel || '--';
+        if ((!aluguelResolved || aluguelResolved === '--') && finRes.status === 'fulfilled') {
+          const fin = finRes.value || {};
+          const residentRow = (fin.residents || []).find(
+            (r) => String(r?.nome || '').trim().toUpperCase() === String(resident || '').trim().toUpperCase()
+          );
+          aluguelResolved = residentRow?.total || residentRow?.aluguel || '--';
+        }
+        setMeuResumo({ aluguel: aluguelResolved, mesReferencia: dados.mesReferencia || '' });
+      } else if (finRes.status === 'fulfilled') {
+        const fin = finRes.value || {};
+        const residentRow = (fin.residents || []).find(
+          (r) => String(r?.nome || '').trim().toUpperCase() === String(resident || '').trim().toUpperCase()
+        );
+        setMeuResumo({
+          aluguel: residentRow?.total || residentRow?.aluguel || '--',
+          mesReferencia: fin.mesReferencia || '',
+        });
       }
       if (tfRes.status === 'fulfilled') {
         const tf = tfRes.value || {};
