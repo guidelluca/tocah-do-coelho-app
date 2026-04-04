@@ -109,7 +109,7 @@ export function FeedScreen() {
   useFocusEffect(
     useCallback(() => {
       load('silent');
-      const timer = setInterval(() => load('silent'), 7000);
+      const timer = setInterval(() => load('silent'), 20000);
       return () => clearInterval(timer);
     }, [load])
   );

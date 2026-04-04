@@ -197,7 +197,7 @@ export function FinancesScreen() {
       load('silent');
       const timer = setInterval(() => {
         load('silent');
-      }, 7000);
+      }, 20000);
       return () => clearInterval(timer);
     }, [load])
   );

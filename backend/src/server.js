@@ -25,6 +25,8 @@ const {
 const MONTHS_PT = ['JAN', 'FEV', 'MAR', 'ABR', 'MAI', 'JUN', 'JUL', 'AGO', 'SET', 'OUT', 'NOV', 'DEZ'];
 const RESIDENTS = ['ALLAN', 'RAMON', 'VITOR', 'GUSTAVO', 'GUILHERME'];
 const MAX_SHEET_CELL_CHARS = 45000;
+const READ_CACHE_TTL_MS = 20000;
+const readCache = new Map();
 
 function badRequest(res, message) {
   return res.status(400).json({ ok: false, message });
@@ -148,6 +150,7 @@ async function updateRange(range, values) {
     valueInputOption: 'USER_ENTERED',
     requestBody: { values: [values] },
   });
+  readCache.clear();
 }
 
 async function getSheetsApi() {
@@ -163,9 +166,16 @@ async function getSheetsApi() {
 }
 
 async function readRange(range) {
+  const cacheKey = String(range || '').trim();
+  const cached = readCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.values;
+  }
   const sheets = await getSheetsApi();
   const res = await sheets.spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range });
-  return res.data.values || [];
+  const values = res.data.values || [];
+  readCache.set(cacheKey, { values, expiresAt: Date.now() + READ_CACHE_TTL_MS });
+  return values;
 }
 
 async function appendRow(range, values) {
@@ -176,6 +186,7 @@ async function appendRow(range, values) {
     valueInputOption: 'USER_ENTERED',
     requestBody: { values: [values] },
   });
+  readCache.clear();
 }
 
 async function ensureSheetExists(sheetName) {
@@ -186,6 +197,7 @@ async function ensureSheetExists(sheetName) {
     spreadsheetId: SPREADSHEET_ID,
     requestBody: { requests: [{ addSheet: { properties: { title: sheetName } } }] },
   });
+  readCache.clear();
 }
 
 async function readRangeWithFallback(primaryRange, fallbackRanges = []) {
