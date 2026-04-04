@@ -4,9 +4,16 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+const TOCAH_LOGO_SOURCES = [
+  { uri: 'https://drive.google.com/uc?export=download&id=1K-KUlO4ZNy5TFz1YIsVh__uxICixnkBS' },
+  { uri: 'https://drive.google.com/uc?export=view&id=1K-KUlO4ZNy5TFz1YIsVh__uxICixnkBS' },
+  { uri: 'https://drive.google.com/thumbnail?id=1K-KUlO4ZNy5TFz1YIsVh__uxICixnkBS&sz=w512' },
+  require('../../assets/icon.png'),
+];
+
 export function AppHeader({ title = 'República Tocah', subtitle = '', onBellPress, notificationCount = 0 }) {
   const insets = useSafeAreaInsets();
-  const [logoFailed, setLogoFailed] = useState(false);
+  const [logoSourceIdx, setLogoSourceIdx] = useState(0);
   const contextLine = subtitle || title;
   return (
     <LinearGradient
@@ -17,12 +24,12 @@ export function AppHeader({ title = 'República Tocah', subtitle = '', onBellPre
     >
       <View style={styles.left}>
         <View style={styles.logoWrap}>
-          {!logoFailed ? (
+          {logoSourceIdx < TOCAH_LOGO_SOURCES.length ? (
             <Image
-              source={require('../../assets/icon.png')}
+              source={TOCAH_LOGO_SOURCES[logoSourceIdx]}
               style={styles.logo}
               resizeMode="contain"
-              onError={() => setLogoFailed(true)}
+              onError={() => setLogoSourceIdx((prev) => prev + 1)}
             />
           ) : (
             <View style={styles.logoFallback}>
