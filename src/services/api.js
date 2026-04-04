@@ -77,7 +77,9 @@ async function fetchJson(url, init) {
   const controller = new AbortController();
   const method = String(init?.method || 'GET').toUpperCase();
   const bodyLength = typeof init?.body === 'string' ? init.body.length : 0;
-  const timeoutMs = method === 'POST' && bodyLength > 200000 ? 30000 : 8000;
+  const timeoutMs = method === 'POST'
+    ? (bodyLength > 200000 ? 35000 : 18000)
+    : 18000;
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   let res;
   try {
@@ -103,6 +105,10 @@ async function fetchJson(url, init) {
   return data;
 }
 
+async function sleep(ms) {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function requestJson(url) {
   const candidates = [preferredApiBase, ...API_BASE_CANDIDATES.filter((b) => b !== preferredApiBase)];
   let lastError = null;
@@ -114,6 +120,17 @@ async function requestJson(url) {
       return data;
     } catch (error) {
       lastError = error;
+      const transient = /Tempo esgotado|Network request failed|Failed to fetch/i.test(String(error?.message || ''));
+      if (transient) {
+        try {
+          await sleep(1200);
+          const retryData = await fetchJson(candidateUrl);
+          preferredApiBase = base;
+          return retryData;
+        } catch (retryError) {
+          lastError = retryError;
+        }
+      }
     }
   }
   if (String(lastError?.message || '').includes('Network request failed')) {
@@ -136,6 +153,21 @@ async function postJson(body) {
       return data;
     } catch (error) {
       lastError = error;
+      const transient = /Tempo esgotado|Network request failed|Failed to fetch/i.test(String(error?.message || ''));
+      if (transient) {
+        try {
+          await sleep(1200);
+          const retryData = await fetchJson(base, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          });
+          preferredApiBase = base;
+          return retryData;
+        } catch (retryError) {
+          lastError = retryError;
+        }
+      }
     }
   }
   if (String(lastError?.message || '').includes('Network request failed')) {
