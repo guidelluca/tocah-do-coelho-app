@@ -789,18 +789,28 @@ app.post('/api', async (req, res) => {
       return res.json({ ok: true, message: 'Comentario publicado.' });
     }
     if (action === 'deleteTaskFeedPost') {
-      const { rowIndex, actor = '' } = req.body || {};
+      const { rowIndex, ts = '', actor = '' } = req.body || {};
       const row = Number(rowIndex);
-      if (!Number.isFinite(row) || row < 1) return badRequest(res, 'rowIndex invalido.');
       await ensureSheetExists(TASK_FEED_SHEET);
       const rows = await readRangeOrEmpty(`${TASK_FEED_SHEET}!A:H`);
       const first = rows[0] || [];
       const hasHeader = String(first[0] || '').toLowerCase() === 'week';
-      const zeroIdx = row - 1;
+      let resolvedRow = Number.isFinite(row) && row >= 1 ? row : 0;
+      if ((!resolvedRow || resolvedRow < 1) && String(ts || '').trim()) {
+        const dataStart = hasHeader ? 1 : 0;
+        for (let i = dataStart; i < rows.length; i += 1) {
+          const r = rows[i] || [];
+          if (String(r[1] || '').trim() === String(ts || '').trim()) {
+            resolvedRow = i + 1;
+            break;
+          }
+        }
+      }
+      if (!resolvedRow || resolvedRow < 1) return badRequest(res, 'rowIndex ou ts invalidos.');
+      const zeroIdx = resolvedRow - 1;
       const current = rows[zeroIdx] || [];
       if (!current.length) return badRequest(res, 'Post nao encontrado.');
-      if (!hasHeader && row === 1) return badRequest(res, 'Linha invalida para exclusao.');
-      await updateRange(`${TASK_FEED_SHEET}!A${row}:H${row}`, ['', '', 'deleted', '', '', '', '[post removido]', '']);
+      await updateRange(`${TASK_FEED_SHEET}!A${resolvedRow}:H${resolvedRow}`, ['', '', 'deleted', '', '', '', '[post removido]', '']);
       return res.json({ ok: true, message: 'Post excluido com sucesso.' });
     }
     return badRequest(res, `action POST nao suportada: ${action}`);

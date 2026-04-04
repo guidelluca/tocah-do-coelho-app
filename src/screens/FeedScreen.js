@@ -395,7 +395,7 @@ export function FeedScreen() {
                       style: 'destructive',
                       onPress: async () => {
                         try {
-                          await deleteTaskFeedPost({ rowIndex: post.rowIndex, actor: resident });
+                          await deleteTaskFeedPost({ rowIndex: post.rowIndex, ts: post.ts, actor: resident });
                           await load('pull');
                         } catch (e) {
                           Alert.alert('Erro', e?.message || 'Não foi possível excluir o post.');
@@ -474,7 +474,7 @@ export function FeedScreen() {
                                 style: 'destructive',
                                 onPress: async () => {
                                   try {
-                                    await deleteTaskFeedPost({ rowIndex: reply.rowIndex, actor: resident });
+                                    await deleteTaskFeedPost({ rowIndex: reply.rowIndex, ts: reply.ts, actor: resident });
                                     await load('pull');
                                   } catch (e) {
                                     Alert.alert('Erro', e?.message || 'Não foi possível excluir o comentário.');

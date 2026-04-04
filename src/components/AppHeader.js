@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -5,6 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export function AppHeader({ title = 'República Tocah', subtitle = '', onBellPress, notificationCount = 0 }) {
   const insets = useSafeAreaInsets();
+  const [logoFailed, setLogoFailed] = useState(false);
   const contextLine = subtitle || title;
   return (
     <LinearGradient
@@ -15,11 +17,18 @@ export function AppHeader({ title = 'República Tocah', subtitle = '', onBellPre
     >
       <View style={styles.left}>
         <View style={styles.logoWrap}>
-          <Image
-            source={require('../../assets/icon.png')}
-            style={styles.logo}
-            resizeMode="contain"
-          />
+          {!logoFailed ? (
+            <Image
+              source={require('../../assets/icon.png')}
+              style={styles.logo}
+              resizeMode="contain"
+              onError={() => setLogoFailed(true)}
+            />
+          ) : (
+            <View style={styles.logoFallback}>
+              <MaterialCommunityIcons name="rabbit-variant" size={20} color="#6a1b9a" />
+            </View>
+          )}
         </View>
         <View style={{ flex: 1 }}>
           <Text style={styles.houseTitle} numberOfLines={2}>República Tocah do Coelho</Text>
@@ -66,6 +75,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   logo: { width: '100%', height: '100%' },
+  logoFallback: { width: '100%', height: '100%', alignItems: 'center', justifyContent: 'center', backgroundColor: '#f3e8ff' },
   houseTitle: { color: '#fff', fontSize: 20, lineHeight: 22, fontWeight: '900', letterSpacing: 0.1 },
   contextText: { color: 'rgba(255,255,255,0.9)', fontSize: 13, marginTop: 2, fontWeight: '700' },
   bell: {

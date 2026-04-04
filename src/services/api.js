@@ -246,6 +246,6 @@ export async function addTaskFeedComment({ actor, content, target = '', tarefa =
   return postJson({ action: 'addTaskFeedComment', actor, content, target, tarefa, photoDataUrl, parentTs, parentActor });
 }
 
-export async function deleteTaskFeedPost({ rowIndex, actor }) {
-  return postJson({ action: 'deleteTaskFeedPost', rowIndex, actor });
+export async function deleteTaskFeedPost({ rowIndex, ts = '', actor }) {
+  return postJson({ action: 'deleteTaskFeedPost', rowIndex, ts, actor });
 }
