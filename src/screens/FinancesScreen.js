@@ -2,13 +2,12 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, Image, Modal, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
-import { addFinanceEntry, deleteFinanceEntry, getApiDebugInfo, getApiHealth, getFinanceSnapshot, toggleContaStatus, updateFinanceEntry } from '../services/api';
+import { addFinanceEntry, deleteFinanceEntry, getApiHealth, getFinanceSnapshot, toggleContaStatus, updateFinanceEntry } from '../services/api';
 import { useThemeMode } from '../context/ThemeContext';
 import { darkTheme, lightTheme } from '../constants/theme';
 import { AppHeader } from '../components/AppHeader';
 import { formatMonthReference } from '../utils/dateLabel';
 import { useResident } from '../context/ResidentContext';
-const API_URL_DEBUG = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:4000/api';
 
 function toNumber(value) {
   const raw = String(value ?? '').trim();
@@ -573,13 +572,6 @@ export function FinancesScreen() {
               <MaterialCommunityIcons name="refresh" size={14} color="#fff" />
               <Text style={styles.retryBtnText}>Tentar novamente</Text>
             </Pressable>
-          )}
-          {!!error && (
-            <Text style={[styles.helper, { color: colors.muted, marginBottom: 8 }]}>
-              API: {API_URL_DEBUG}{'\n'}
-              Preferida: {getApiDebugInfo().preferredApiBase}{'\n'}
-              Candidatas: {getApiDebugInfo().candidates.join(' | ')}
-            </Text>
           )}
 
           <View style={styles.kpiStrip}>

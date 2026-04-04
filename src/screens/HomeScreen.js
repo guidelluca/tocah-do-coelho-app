@@ -5,12 +5,11 @@ import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
 import { useThemeMode } from '../context/ThemeContext';
 import { darkTheme, lightTheme } from '../constants/theme';
-import { addCaixinhaEntry, concluirTarefa, getApiDebugInfo, getCaixinha, getCaixinhaStatement, getDados, getFinanceSnapshot, getTarefaSemana, setPreferredApiBase } from '../services/api';
+import { addCaixinhaEntry, concluirTarefa, getCaixinha, getCaixinhaStatement, getDados, getFinanceSnapshot, getTarefaSemana } from '../services/api';
 import { AppHeader } from '../components/AppHeader';
 import { useResident } from '../context/ResidentContext';
 import { useNotifications } from '../context/NotificationContext';
 import { formatMonthReference } from '../utils/dateLabel';
-const API_URL_DEBUG = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:4000/api';
 const HOME_HERO_IMAGE_URLS = [
   'https://drive.google.com/uc?export=download&id=1GLeZgJ8o3l5Gvp8j5_W42Ld3f-puR2aQ',
   'https://drive.google.com/uc?export=view&id=1GLeZgJ8o3l5Gvp8j5_W42Ld3f-puR2aQ',
@@ -334,29 +333,6 @@ export function HomeScreen() {
           <Text style={styles.retryBtnText}>Tentar novamente</Text>
         </Pressable>
       )}
-      {!!error && (
-        <Text style={[styles.subtitle, { color: colors.muted, marginTop: -6 }]}>
-          API: {API_URL_DEBUG}{'\n'}
-          Preferida: {getApiDebugInfo().preferredApiBase}{'\n'}
-          Candidatas: {getApiDebugInfo().candidates.join(' | ')}
-        </Text>
-      )}
-      {!!error && (
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.residentRow}>
-          {getApiDebugInfo().candidates.map((base) => (
-            <Pressable
-              key={base}
-              style={[styles.residentChip, styles.debugChip]}
-              onPress={async () => {
-                setPreferredApiBase(base);
-                await load();
-              }}
-            >
-              <Text style={styles.residentChipText}>Usar {base.replace('http://', '')}</Text>
-            </Pressable>
-          ))}
-        </ScrollView>
-      )}
 
       <Pressable onPress={() => openRentDetail(resident)} style={[styles.card, styles.balanceCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
         <View style={styles.rentTopRow}>
@@ -663,7 +639,6 @@ const styles = StyleSheet.create({
   residentChipActive: { backgroundColor: '#6a1b9a', borderColor: '#6a1b9a' },
   residentChipText: { color: '#374151', fontSize: 11, fontWeight: '800' },
   residentChipTextActive: { color: '#fff' },
-  debugChip: { backgroundColor: '#fff7ed', borderColor: '#fdba74' },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
   modalCard: { borderTopLeftRadius: 22, borderTopRightRadius: 22, padding: 16, paddingBottom: 24 },
   modalHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
