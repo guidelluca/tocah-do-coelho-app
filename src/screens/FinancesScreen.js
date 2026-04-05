@@ -388,12 +388,21 @@ export function FinancesScreen() {
             return;
           }
           const payer = form.quem.trim();
-          const participantes = Array.from(
-            new Set([payer, ...(form.dividirCom || []).map((n) => String(n).trim()).filter(Boolean)])
+          const devedores = Array.from(
+            new Set(
+              (form.dividirCom || [])
+                .map((n) => String(n).trim())
+                .filter(Boolean)
+                .filter((nome) => String(nome).toUpperCase() !== String(payer).toUpperCase())
+            )
           );
-          const qtdPessoas = Math.max(1, participantes.length);
-          const valorPorPessoa = toNumber(form.quanto) / qtdPessoas;
-          const splitMeta = `Divisao: ${qtdPessoas} pessoas (${brl(valorPorPessoa)}/pessoa) • ${participantes.join(', ')}`;
+          if (!devedores.length) {
+            Alert.alert('Devedores obrigatorios', 'Selecione ao menos um morador para dividir com quem emprestou.');
+            return;
+          }
+          const qtdDevedores = Math.max(1, devedores.length);
+          const valorPorPessoa = toNumber(form.quanto) / qtdDevedores;
+          const splitMeta = `Divisao: ${qtdDevedores} devedor(es) (${brl(valorPorPessoa)}/devedor) • ${devedores.join(', ')} -> ${payer}`;
           const obsPayload = [form.obs.trim(), splitMeta].filter(Boolean).join(' | ');
           await addFinanceEntry({
             entryType: 'gastoColetivo',
@@ -405,21 +414,18 @@ export function FinancesScreen() {
               obs: obsPayload,
             },
           });
-          const devedores = participantes.filter((nome) => String(nome).toUpperCase() !== String(payer).toUpperCase());
-          if (devedores.length) {
-            const valorAcerto = (toNumber(form.quanto) / qtdPessoas).toFixed(2);
-            for (const devedor of devedores) {
-              await addFinanceEntry({
-                entryType: 'acertoIndividual',
-                usuario: resident,
-                payload: {
-                  quem: devedor,
-                  paraQuem: payer,
-                  deveQuanto: forceDotDecimal(valorAcerto),
-                  obs: form.obs.trim(),
-                },
-              });
-            }
+          const valorAcerto = (toNumber(form.quanto) / qtdDevedores).toFixed(2);
+          for (const devedor of devedores) {
+            await addFinanceEntry({
+              entryType: 'acertoIndividual',
+              usuario: resident,
+              payload: {
+                quem: devedor,
+                paraQuem: payer,
+                deveQuanto: forceDotDecimal(valorAcerto),
+                obs: form.obs.trim(),
+              },
+            });
           }
         } else if (entryType === 'acertoIndividual') {
           if (!form.quem.trim() || !form.paraQuem.trim() || !form.deveQuanto.trim()) {
@@ -953,8 +959,15 @@ export function FinancesScreen() {
                     <TextInput value={form.oQue} onChangeText={(v) => setForm((p) => ({ ...p, oQue: v }))} style={styles.input} placeholder="Descrição" placeholderTextColor="#94a3b8" />
                     <TextInput value={form.quanto} onChangeText={(v) => setForm((p) => ({ ...p, quanto: formatMoneyInput(v) }))} style={styles.input} placeholder="Valor" keyboardType="decimal-pad" placeholderTextColor="#94a3b8" />
                     <Text style={[styles.helper, { color: colors.muted, marginBottom: 6 }]}>
-                      Divisao atual: {Math.max(1, 1 + (form.dividirCom || []).length)} pessoas •{' '}
-                      {brl(toNumber(form.quanto) / Math.max(1, 1 + (form.dividirCom || []).length))} por pessoa
+                      Divisao atual: {Math.max(1, (form.dividirCom || []).filter((n) => String(n).trim().toUpperCase() !== String(form.quem || '').trim().toUpperCase()).length)} devedor(es) •{' '}
+                      {brl(
+                        toNumber(form.quanto) /
+                        Math.max(
+                          1,
+                          (form.dividirCom || [])
+                            .filter((n) => String(n).trim().toUpperCase() !== String(form.quem || '').trim().toUpperCase()).length
+                        )
+                      )} por devedor
                     </Text>
                     <TextInput value={form.obs} onChangeText={(v) => setForm((p) => ({ ...p, obs: v }))} style={styles.input} placeholder="Observacao (opcional)" placeholderTextColor="#94a3b8" />
                   </>

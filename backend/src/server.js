@@ -852,7 +852,7 @@ app.post('/api', async (req, res) => {
       return res.json({ ok: true, message: 'Comentario publicado.' });
     }
     if (action === 'deleteTaskFeedPost') {
-      const { rowIndex, ts = '', actor = '' } = req.body || {};
+      const { rowIndex, ts = '', actor = '', postActor = '', postContent = '', postType = '' } = req.body || {};
       const row = Number(rowIndex);
       await ensureSheetExists(TASK_FEED_SHEET);
       const rows = await readRangeOrEmpty(`${TASK_FEED_SHEET}!A:H`);
@@ -886,6 +886,27 @@ app.post('/api', async (req, res) => {
           const r = rows[i] || [];
           const rowActor = String(r[3] || '').trim().toUpperCase();
           if (rowActor === normalizedActor) {
+            resolvedRow = i + 1;
+            break;
+          }
+        }
+      }
+
+      // Strong fallback: match recent row by payload signature from frontend.
+      if ((!resolvedRow || resolvedRow < 1) && (String(postActor || '').trim() || String(postContent || '').trim())) {
+        const dataStart = hasHeader ? 1 : 0;
+        const normalizedPostActor = String(postActor || '').trim().toUpperCase();
+        const normalizedPostContent = String(postContent || '').trim();
+        const normalizedPostType = String(postType || '').trim().toLowerCase();
+        for (let i = rows.length - 1; i >= dataStart; i -= 1) {
+          const r = rows[i] || [];
+          const rowType = String(r[2] || '').trim().toLowerCase();
+          const rowActor = String(r[3] || '').trim().toUpperCase();
+          const rowContent = String(r[6] || '').trim();
+          const typeMatches = !normalizedPostType || rowType === normalizedPostType;
+          const actorMatches = !normalizedPostActor || rowActor === normalizedPostActor;
+          const contentMatches = !normalizedPostContent || rowContent === normalizedPostContent;
+          if (typeMatches && actorMatches && contentMatches) {
             resolvedRow = i + 1;
             break;
           }
