@@ -171,27 +171,30 @@ export function NildeScreen() {
     setProofVisible(true);
   };
 
-  const onCheckSlot = async (dayKey, slotId, comment = '') => {
-    const permission = await ImagePicker.requestCameraPermissionsAsync();
-    if (!permission.granted) {
-      Alert.alert('Permissão necessária', 'Permita o uso da câmera para comprovar a alimentação da Nilde.');
-      return;
+  const onCheckSlot = async (dayKey, slotId, comment = '', withPhoto = false) => {
+    let photoDataUrl = '';
+    if (withPhoto) {
+      const permission = await ImagePicker.requestCameraPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert('Permissão necessária', 'Permita o uso da câmera para adicionar a foto opcional.');
+        return;
+      }
+      const capture = await ImagePicker.launchCameraAsync({
+        quality: 0.25,
+        allowsEditing: true,
+        base64: true,
+        mediaTypes: IMAGE_MEDIA_TYPES,
+      });
+      if (capture.canceled || !capture.assets?.[0]?.base64) {
+        Alert.alert('Sem foto', 'Você pode confirmar sem foto ou tentar novamente com foto.');
+        return;
+      }
+      photoDataUrl = `data:image/jpeg;base64,${capture.assets[0].base64}`;
     }
-    const capture = await ImagePicker.launchCameraAsync({
-      quality: 0.25,
-      allowsEditing: true,
-      base64: true,
-      mediaTypes: IMAGE_MEDIA_TYPES,
-    });
-    if (capture.canceled || !capture.assets?.[0]?.base64) {
-      Alert.alert('Foto obrigatória', 'Para marcar o check, é obrigatório enviar a foto de comprovação.');
-      return;
-    }
-    const photoDataUrl = `data:image/jpeg;base64,${capture.assets[0].base64}`;
     const slotLabel = SLOT_DEFS.find((s) => s.id === slotId)?.label || slotId;
     const content = comment?.trim()
       ? `Nilde • ${slotLabel} • ${comment.trim()}`
-      : `Nilde • ${slotLabel} • alimentação registrada`;
+      : `Nilde • ${slotLabel} • alimentação registrada${withPhoto ? ' com foto' : ''}`;
 
     setProofSending(true);
     const next = {
@@ -216,7 +219,7 @@ export function NildeScreen() {
       setProofVisible(false);
       setProofTarget(null);
       setProofComment('');
-      Alert.alert('Check registrado', 'Comprovação enviada para o Feed.');
+      Alert.alert('Check registrado', withPhoto ? 'Check confirmado com foto no Feed.' : 'Check confirmado sem foto.');
     } catch (e) {
       Alert.alert('Erro', e?.message || 'Não foi possível enviar comprovação.');
     } finally {
@@ -484,7 +487,7 @@ export function NildeScreen() {
           <View style={[styles.modalCard, { backgroundColor: colors.surface }]}>
             <Text style={[styles.title, { color: colors.text, marginBottom: 4 }]}>Comprovar alimentação</Text>
             <Text style={[styles.helper, { color: colors.muted }]}>
-              {SLOT_DEFS.find((s) => s.id === proofTarget?.slotId)?.label || '-'} • foto obrigatória
+              {SLOT_DEFS.find((s) => s.id === proofTarget?.slotId)?.label || '-'} • foto opcional
             </Text>
             <TextInput
               value={proofComment}
@@ -499,11 +502,18 @@ export function NildeScreen() {
                 <Text style={styles.cancelBtnText}>Cancelar</Text>
               </Pressable>
               <Pressable
-                style={[styles.confirmBtn, proofSending && { opacity: 0.75 }]}
-                onPress={() => onCheckSlot(proofTarget?.dayKey, proofTarget?.slotId, proofComment)}
+                style={[styles.secondaryConfirmBtn, proofSending && { opacity: 0.75 }]}
+                onPress={() => onCheckSlot(proofTarget?.dayKey, proofTarget?.slotId, proofComment, false)}
                 disabled={proofSending}
               >
-                {proofSending ? <ActivityIndicator color="#fff" size="small" /> : <Text style={styles.confirmBtnText}>Tirar foto e confirmar</Text>}
+                {proofSending ? <ActivityIndicator color="#4a148c" size="small" /> : <Text style={styles.secondaryConfirmBtnText}>Confirmar sem foto</Text>}
+              </Pressable>
+              <Pressable
+                style={[styles.confirmBtn, proofSending && { opacity: 0.75 }]}
+                onPress={() => onCheckSlot(proofTarget?.dayKey, proofTarget?.slotId, proofComment, true)}
+                disabled={proofSending}
+              >
+                {proofSending ? <ActivityIndicator color="#fff" size="small" /> : <Text style={styles.confirmBtnText}>Confirmar com foto</Text>}
               </Pressable>
             </View>
           </View>
@@ -618,9 +628,11 @@ const styles = StyleSheet.create({
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' },
   modalCard: { borderTopLeftRadius: 22, borderTopRightRadius: 22, padding: 16, paddingBottom: 26 },
   modalInput: { borderWidth: 1, borderColor: '#d1d5db', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, marginTop: 10, marginBottom: 12, color: '#111827', fontWeight: '600', minHeight: 60, textAlignVertical: 'top' },
-  modalActions: { flexDirection: 'row', gap: 8 },
-  cancelBtn: { flex: 1, borderRadius: 10, borderWidth: 1, borderColor: '#d1d5db', paddingVertical: 11, alignItems: 'center', backgroundColor: '#fff' },
+  modalActions: { flexDirection: 'column', gap: 8 },
+  cancelBtn: { borderRadius: 10, borderWidth: 1, borderColor: '#d1d5db', paddingVertical: 11, alignItems: 'center', backgroundColor: '#fff' },
   cancelBtnText: { color: '#6b7280', fontWeight: '700' },
-  confirmBtn: { flex: 1, borderRadius: 10, paddingVertical: 11, alignItems: 'center', justifyContent: 'center', backgroundColor: '#6a1b9a' },
+  secondaryConfirmBtn: { borderRadius: 10, borderWidth: 1, borderColor: '#d8b4fe', paddingVertical: 11, alignItems: 'center', justifyContent: 'center', backgroundColor: '#f3e8ff' },
+  secondaryConfirmBtnText: { color: '#4a148c', fontWeight: '800' },
+  confirmBtn: { borderRadius: 10, paddingVertical: 11, alignItems: 'center', justifyContent: 'center', backgroundColor: '#6a1b9a' },
   confirmBtnText: { color: '#fff', fontWeight: '800' },
 });

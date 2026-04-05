@@ -828,20 +828,25 @@ app.post('/api', async (req, res) => {
     }
     if (action === 'addTaskFeedComment') {
       const { actor = '', content = '', target = '', tarefa = '', photoDataUrl = '', parentTs = '', parentActor = '' } = req.body || {};
-      if (!actor || !content) return badRequest(res, 'actor e content obrigatorios.');
+      const normalizedActor = String(actor || '').trim();
+      const normalizedContent = String(content || '').trim();
+      const hasPhoto = String(photoDataUrl || '').trim().length > 0;
+      if (!normalizedActor) return badRequest(res, 'actor obrigatorio.');
+      if (!normalizedContent && !hasPhoto) return badRequest(res, 'Envie um texto ou uma foto para publicar.');
       await ensureSheetExists(TASK_FEED_SHEET);
       const wk = weekKey();
       const ts = new Date().toISOString();
       const savedPhoto = await storeTaskPhotoDataUrl(photoDataUrl);
       const isReply = !!String(parentTs || '').trim();
+      const finalContent = normalizedContent || 'publicou uma foto';
       await appendRow(`${TASK_FEED_SHEET}!A:H`, [
         wk,
         ts,
         isReply ? 'comment_reply' : 'comment',
-        actor,
+        normalizedActor,
         isReply ? String(parentTs).trim() : target,
         isReply ? String(parentActor || '').trim() : tarefa,
-        content,
+        finalContent,
         savedPhoto,
       ]);
       return res.json({ ok: true, message: 'Comentario publicado.' });
@@ -853,21 +858,47 @@ app.post('/api', async (req, res) => {
       const rows = await readRangeOrEmpty(`${TASK_FEED_SHEET}!A:H`);
       const first = rows[0] || [];
       const hasHeader = String(first[0] || '').toLowerCase() === 'week';
-      let resolvedRow = Number.isFinite(row) && row >= 1 ? row : 0;
-      if ((!resolvedRow || resolvedRow < 1) && String(ts || '').trim()) {
+      const normalizedTs = String(ts || '').trim();
+      let resolvedRow = 0;
+
+      // Prefer timestamp resolution first; rowIndex can become stale after list sorting/filtering.
+      if (normalizedTs) {
         const dataStart = hasHeader ? 1 : 0;
         for (let i = dataStart; i < rows.length; i += 1) {
           const r = rows[i] || [];
-          if (String(r[1] || '').trim() === String(ts || '').trim()) {
+          if (String(r[1] || '').trim() === normalizedTs) {
             resolvedRow = i + 1;
             break;
           }
         }
       }
+
+      // Fallback to incoming rowIndex when ts lookup is unavailable.
+      if ((!resolvedRow || resolvedRow < 1) && Number.isFinite(row) && row >= 1) {
+        resolvedRow = row;
+      }
+
+      // Last fallback: match by actor if ts is missing and rowIndex did not resolve.
+      if ((!resolvedRow || resolvedRow < 1) && !normalizedTs && String(actor || '').trim()) {
+        const dataStart = hasHeader ? 1 : 0;
+        const normalizedActor = String(actor || '').trim().toUpperCase();
+        for (let i = rows.length - 1; i >= dataStart; i -= 1) {
+          const r = rows[i] || [];
+          const rowActor = String(r[3] || '').trim().toUpperCase();
+          if (rowActor === normalizedActor) {
+            resolvedRow = i + 1;
+            break;
+          }
+        }
+      }
+
       if (!resolvedRow || resolvedRow < 1) return badRequest(res, 'rowIndex ou ts invalidos.');
       const zeroIdx = resolvedRow - 1;
       const current = rows[zeroIdx] || [];
-      if (!current.length) return badRequest(res, 'Post nao encontrado.');
+      if (!current.length) {
+        if (normalizedTs) return badRequest(res, 'Post nao encontrado para o timestamp informado.');
+        return badRequest(res, 'Post nao encontrado.');
+      }
       await updateRange(`${TASK_FEED_SHEET}!A${resolvedRow}:H${resolvedRow}`, ['', '', 'deleted', '', '', '', '[post removido]', '']);
       return res.json({ ok: true, message: 'Post excluido com sucesso.' });
     }

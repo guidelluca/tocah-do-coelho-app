@@ -5,7 +5,7 @@ const STORAGE_KEY = '@tocah_theme_mode';
 const ThemeModeContext = createContext(null);
 
 export function ThemeProvider({ children }) {
-  const [isDark, setIsDark] = useState(true);
+  const [isDark, setIsDark] = useState(false);
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
