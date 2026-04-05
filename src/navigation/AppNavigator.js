@@ -19,6 +19,7 @@ export function AppNavigator() {
     <Tab.Navigator
       screenOptions={({ route }) => ({
         headerShown: false,
+        sceneStyle: { backgroundColor: colors.background },
         tabBarStyle: {
           backgroundColor: colors.surface,
           borderTopColor: 'transparent',
@@ -27,7 +28,7 @@ export function AppNavigator() {
           paddingBottom: 10,
           paddingTop: 10,
           marginHorizontal: 12,
-          marginBottom: 12,
+          marginBottom: 4,
           borderRadius: 20,
           shadowColor: isDark ? '#000' : '#4b3b83',
           shadowOpacity: isDark ? 0.3 : 0.15,

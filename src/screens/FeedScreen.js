@@ -60,6 +60,18 @@ export function FeedScreen() {
   const { isDark } = useThemeMode();
   const { resident, getResidentPhoto, setResidentPhoto, removeResidentPhoto } = useResident();
   const colors = isDark ? darkTheme : lightTheme;
+  const panelBg = isDark ? '#252338' : '#fff';
+  const panelBorder = isDark ? '#3b3754' : '#d1d5db';
+  const softBg = isDark ? '#2c2940' : '#f3e5f5';
+  const softBorder = isDark ? '#4a4566' : '#e9d5ff';
+  const inputBg = isDark ? '#211f31' : '#fff';
+  const inputBorder = isDark ? '#3e3a56' : '#d1d5db';
+  const footerBg = isDark ? '#242238' : '#f8fafc';
+  const footerBorder = isDark ? '#3a3652' : '#e5e7eb';
+  const replyBg = isDark ? '#221f34' : '#faf5ff';
+  const replyBorder = isDark ? '#3f3a58' : '#ede9fe';
+  const activePurple = isDark ? '#c4b5fd' : '#6a1b9a';
+  const activePurpleDeep = isDark ? '#ddd6fe' : '#4a148c';
   const [feed, setFeed] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -276,8 +288,8 @@ export function FeedScreen() {
             <Text style={[styles.composerTitle, { color: colors.text }]}>Publicar no feed</Text>
             <Text style={styles.composerSubtitle}>Compartilhe progresso, foto ou aviso da casa.</Text>
           </View>
-          <Pressable style={styles.profileEditBtn} onPress={handleProfilePhotoOptions}>
-            <MaterialCommunityIcons name="account-edit-outline" size={16} color="#6a1b9a" />
+          <Pressable style={[styles.profileEditBtn, { backgroundColor: softBg, borderColor: softBorder }]} onPress={handleProfilePhotoOptions}>
+            <MaterialCommunityIcons name="account-edit-outline" size={16} color={activePurple} />
           </Pressable>
         </View>
         <View style={styles.filterRow}>
@@ -287,8 +299,16 @@ export function FeedScreen() {
             ['rating', `Notas (${counters.rating})`],
             ['comment', `Posts (${counters.comment})`],
           ].map(([id, label]) => (
-            <Pressable key={id} style={[styles.filterChip, filter === id && styles.filterChipActive]} onPress={() => setFilter(id)}>
-              <Text style={[styles.filterChipText, filter === id && styles.filterChipTextActive]}>{label}</Text>
+            <Pressable
+              key={id}
+              style={[
+                styles.filterChip,
+                { backgroundColor: panelBg, borderColor: panelBorder },
+                filter === id && [styles.filterChipActive, { borderColor: activePurple, backgroundColor: softBg }],
+              ]}
+              onPress={() => setFilter(id)}
+            >
+              <Text style={[styles.filterChipText, { color: colors.muted }, filter === id && [styles.filterChipTextActive, { color: activePurpleDeep }]]}>{label}</Text>
             </Pressable>
           ))}
         </View>
@@ -299,13 +319,13 @@ export function FeedScreen() {
             onChangeText={setCommentText}
             placeholder="Compartilhe algo da semana..."
             placeholderTextColor="#94a3b8"
-            style={styles.commentInput}
+            style={[styles.commentInput, { backgroundColor: inputBg, borderColor: inputBorder, color: colors.text }]}
           />
-          <Pressable style={styles.attachBtn} onPress={pickPostPhoto}>
-            <MaterialCommunityIcons name="image-plus" size={16} color="#6a1b9a" />
+          <Pressable style={[styles.attachBtn, { backgroundColor: panelBg, borderColor: panelBorder }]} onPress={pickPostPhoto}>
+            <MaterialCommunityIcons name="image-plus" size={16} color={activePurple} />
           </Pressable>
-          <Pressable style={styles.attachBtn} onPress={takePostPhoto}>
-            <MaterialCommunityIcons name="camera-outline" size={16} color="#6a1b9a" />
+          <Pressable style={[styles.attachBtn, { backgroundColor: panelBg, borderColor: panelBorder }]} onPress={takePostPhoto}>
+            <MaterialCommunityIcons name="camera-outline" size={16} color={activePurple} />
           </Pressable>
           <Pressable
             style={[styles.sendBtn, postingMain && { opacity: 0.75 }]}
@@ -332,7 +352,7 @@ export function FeedScreen() {
         {!!postPhoto && (
           <View style={styles.previewWrap}>
             <Image source={{ uri: postPhoto }} style={styles.previewImg} resizeMode="contain" />
-            <Pressable style={styles.previewRemove} onPress={() => setPostPhoto('')}>
+            <Pressable style={[styles.previewRemove, { backgroundColor: panelBg }]} onPress={() => setPostPhoto('')}>
               <MaterialCommunityIcons name="close-circle" size={20} color="#ef4444" />
             </Pressable>
           </View>
@@ -356,14 +376,14 @@ export function FeedScreen() {
           {[0, 1, 2].map((item) => (
             <View key={`skeleton-${item}`} style={[styles.feedSkeleton, { borderColor: colors.border, backgroundColor: colors.surface }]}>
               <View style={styles.feedSkeletonHead}>
-                <View style={styles.skeletonAvatar} />
+                <View style={[styles.skeletonAvatar, { backgroundColor: isDark ? '#2c2940' : '#ececf1' }]} />
                 <View style={{ flex: 1 }}>
-                  <View style={styles.skeletonLineLg} />
-                  <View style={styles.skeletonLineSm} />
+                  <View style={[styles.skeletonLineLg, { backgroundColor: isDark ? '#2c2940' : '#ececf1' }]} />
+                  <View style={[styles.skeletonLineSm, { backgroundColor: isDark ? '#2c2940' : '#ececf1' }]} />
                 </View>
               </View>
-              <View style={styles.skeletonLineFull} />
-              <View style={styles.skeletonImage} />
+              <View style={[styles.skeletonLineFull, { backgroundColor: isDark ? '#2c2940' : '#ececf1' }]} />
+              <View style={[styles.skeletonImage, { backgroundColor: isDark ? '#2c2940' : '#ececf1' }]} />
             </View>
           ))}
         </>
@@ -392,8 +412,8 @@ export function FeedScreen() {
               </View>
             </View>
             <View style={styles.feedActions}>
-              <Pressable style={styles.feedReplyBtn} onPress={() => openReplyComposer(post.ts)}>
-                <MaterialCommunityIcons name="comment-text-outline" size={15} color="#6a1b9a" />
+              <Pressable style={[styles.feedReplyBtn, { backgroundColor: softBg }]} onPress={() => openReplyComposer(post.ts)}>
+                <MaterialCommunityIcons name="comment-text-outline" size={15} color={activePurple} />
               </Pressable>
               <Pressable
                 style={styles.feedDeleteBtn}
@@ -440,7 +460,11 @@ export function FeedScreen() {
 
           <View style={styles.feedFooterBar}>
             <Pressable
-              style={[styles.feedFooterAction, likedByPostTs[post.ts] && styles.feedFooterActionActive]}
+              style={[
+                styles.feedFooterAction,
+                { backgroundColor: footerBg, borderColor: footerBorder },
+                likedByPostTs[post.ts] && [styles.feedFooterActionActive, { backgroundColor: softBg, borderColor: softBorder }],
+              ]}
               onPress={() => toggleLike(post.ts)}
             >
               <MaterialCommunityIcons name={likedByPostTs[post.ts] ? 'heart' : 'heart-outline'} size={16} color={likedByPostTs[post.ts] ? '#e11d48' : '#9ca3af'} />
@@ -449,15 +473,19 @@ export function FeedScreen() {
               </Text>
             </Pressable>
             <Pressable
-              style={[styles.feedFooterAction, replyingToTs === post.ts && styles.feedFooterActionActive]}
+              style={[
+                styles.feedFooterAction,
+                { backgroundColor: footerBg, borderColor: footerBorder },
+                replyingToTs === post.ts && [styles.feedFooterActionActive, { backgroundColor: softBg, borderColor: softBorder }],
+              ]}
               onPress={() => openReplyComposer(post.ts)}
             >
-              <MaterialCommunityIcons name="comment-outline" size={16} color={replyingToTs === post.ts ? '#6a1b9a' : '#9ca3af'} />
+              <MaterialCommunityIcons name="comment-outline" size={16} color={replyingToTs === post.ts ? activePurple : '#9ca3af'} />
               <Text style={[styles.feedFooterText, replyingToTs === post.ts && styles.feedFooterTextActive]}>
                 {(repliesByPostTs[post.ts] || []).length} comentários
               </Text>
             </Pressable>
-            <Pressable style={styles.feedFooterAction} onPress={() => sharePost(post)}>
+            <Pressable style={[styles.feedFooterAction, { backgroundColor: footerBg, borderColor: footerBorder }]} onPress={() => sharePost(post)}>
               <MaterialCommunityIcons name="share-outline" size={16} color="#9ca3af" />
               <Text style={styles.feedFooterText}>Compartilhar</Text>
             </Pressable>
@@ -469,7 +497,7 @@ export function FeedScreen() {
               {(repliesByPostTs[post.ts] || []).map((reply, ridx) => (
                 <View key={`${post.ts}-r-${reply.ts}-${ridx}`} style={styles.replyTimelineItem}>
                   <View style={styles.replyDot} />
-                  <View style={styles.replyBubble}>
+                  <View style={[styles.replyBubble, { backgroundColor: replyBg, borderColor: replyBorder }]}>
                     <View style={styles.replyTopRow}>
                       <Text style={[styles.replyHead, { color: colors.text }]}>{reply.actor} respondeu</Text>
                       <View style={styles.replyTopActions}>
@@ -512,7 +540,7 @@ export function FeedScreen() {
                 onChangeText={setReplyText}
                 placeholder="Escreva sua resposta..."
                 placeholderTextColor="#94a3b8"
-                style={styles.replyInput}
+                style={[styles.replyInput, { backgroundColor: inputBg, borderColor: inputBorder, color: colors.text }]}
               />
               <Pressable
                 style={[styles.replySendBtn, postingReply && { opacity: 0.75 }]}

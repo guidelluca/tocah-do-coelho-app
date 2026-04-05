@@ -59,6 +59,9 @@ export function HomeScreen() {
   const { resident, selectResident, residents, getResidentPhoto } = useResident();
   const { notificationCount, notificationItems, markNotificationsAsSeen, refreshNotifications } = useNotifications();
   const colors = isDark ? darkTheme : lightTheme;
+  const accent = isDark ? '#c4b5fd' : '#6a1b9a';
+  const accentStrong = isDark ? '#ddd6fe' : '#4a148c';
+  const accentSoftBg = isDark ? '#2a2440' : '#f3e5f5';
   const [snapshot, setSnapshot] = useState({ mesReferencia: '', residents: [] });
   const [caixinha, setCaixinha] = useState({ saldo: '0,00' });
   const [meuResumo, setMeuResumo] = useState({ aluguel: '--', mesReferencia: '' });
@@ -278,9 +281,9 @@ export function HomeScreen() {
         }}
       />
       <View style={styles.visibilityRow}>
-        <Pressable style={styles.visibilityBtn} onPress={() => setValuesVisible((prev) => !prev)}>
-          <MaterialCommunityIcons name={valuesVisible ? 'eye-off-outline' : 'eye-outline'} size={16} color="#6a1b9a" />
-          <Text style={styles.visibilityText}>{valuesVisible ? 'Ocultar valores' : 'Mostrar valores'}</Text>
+        <Pressable style={[styles.visibilityBtn, { backgroundColor: accentSoftBg, borderColor: isDark ? '#3d345f' : '#e1bee7' }]} onPress={() => setValuesVisible((prev) => !prev)}>
+          <MaterialCommunityIcons name={valuesVisible ? 'eye-off-outline' : 'eye-outline'} size={16} color={accent} />
+          <Text style={[styles.visibilityText, { color: accent }]}>{valuesVisible ? 'Ocultar valores' : 'Mostrar valores'}</Text>
         </Pressable>
       </View>
 
@@ -320,19 +323,19 @@ export function HomeScreen() {
 
       <View style={styles.quickActions}>
         <Pressable style={[styles.actionBox, { backgroundColor: colors.surface, borderColor: colors.border }]} onPress={() => navigation.navigate('Financas')}>
-          <MaterialCommunityIcons name="cash-plus" size={24} color="#6a1b9a" />
-          <Text style={[styles.actionText, { color: '#6a1b9a' }]}>Lancar Gasto</Text>
+          <MaterialCommunityIcons name="cash-plus" size={24} color={accent} />
+          <Text style={[styles.actionText, { color: accent }]}>Lancar Gasto</Text>
         </Pressable>
         <Pressable style={[styles.actionBox, { backgroundColor: colors.surface, borderColor: colors.border }]} onPress={() => navigation.navigate('Tarefas')}>
-          <MaterialCommunityIcons name="calendar-month-outline" size={24} color="#6a1b9a" />
-          <Text style={[styles.actionText, { color: '#6a1b9a' }]}>Escala Mes</Text>
+          <MaterialCommunityIcons name="calendar-month-outline" size={24} color={accent} />
+          <Text style={[styles.actionText, { color: accent }]}>Escala Mes</Text>
         </Pressable>
         <Pressable
           style={[styles.actionBox, { backgroundColor: colors.surface, borderColor: colors.border }]}
           onPress={() => Alert.alert('Regras da Casa', 'Limpe o que usar, respeite os turnos e registre gastos no mesmo dia.')}
         >
-          <MaterialCommunityIcons name="book-open-page-variant-outline" size={24} color="#6a1b9a" />
-          <Text style={[styles.actionText, { color: '#6a1b9a' }]}>Regras</Text>
+          <MaterialCommunityIcons name="book-open-page-variant-outline" size={24} color={accent} />
+          <Text style={[styles.actionText, { color: accent }]}>Regras</Text>
         </Pressable>
       </View>
 
@@ -351,17 +354,17 @@ export function HomeScreen() {
       <Pressable onPress={() => openRentDetail(resident)} style={[styles.card, styles.balanceCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
         <View style={styles.rentTopRow}>
           <View>
-            <Text style={[styles.metricLabel, { color: '#6a1b9a' }]}>Seu Aluguel</Text>
+            <Text style={[styles.metricLabel, { color: accent } ]}>Seu Aluguel</Text>
             <Text style={[styles.rentMonth, { color: '#7e57c2' }]}>{formatMonthReference(meuResumo.mesReferencia || snapshot.mesReferencia)}</Text>
           </View>
           <View style={styles.rentBadge}>
             <Text style={styles.rentBadgeText}>AO VIVO</Text>
           </View>
         </View>
-        <Text style={[styles.metricValue, { color: '#4a148c' }]}>{maskValue(meuResumo.aluguel)}</Text>
+        <Text style={[styles.metricValue, { color: accentStrong }]}>{maskValue(meuResumo.aluguel)}</Text>
         <View style={styles.rentBottomRow}>
           <View style={styles.rentChip}>
-            <MaterialCommunityIcons name="account-circle-outline" size={14} color="#6a1b9a" />
+            <MaterialCommunityIcons name="account-circle-outline" size={14} color={accent} />
             <Text style={styles.rentChipText}>{resident}</Text>
           </View>
           <View style={styles.rentChip}>
@@ -374,7 +377,7 @@ export function HomeScreen() {
       <View style={[styles.taskCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
         <View style={styles.taskHeaderRow}>
           <View style={styles.taskTitleWrap}>
-            <MaterialCommunityIcons name="calendar-check-outline" size={18} color="#6a1b9a" />
+            <MaterialCommunityIcons name="calendar-check-outline" size={18} color={accent} />
             <Text style={[styles.sectionTitle, { color: colors.text, marginBottom: 0 }]}>Tarefa da Semana</Text>
           </View>
           <View style={[styles.taskStatusPill, taskDone ? styles.taskStatusDone : styles.taskStatusPending]}>

@@ -17,7 +17,7 @@ export function AppHeader({ title = 'República Tocah', subtitle = '', onBellPre
   const { isDark, toggleTheme } = useThemeMode();
   const [logoSourceIdx, setLogoSourceIdx] = useState(0);
   const contextLine = subtitle || title;
-  const gradient = isDark ? ['#2a1d52', '#171225'] : ['#7a4bff', '#5c2dde'];
+  const gradient = isDark ? ['#2a1d52', '#171225'] : ['#4e1aa8', '#3a0f74'];
   return (
     <LinearGradient
       colors={gradient}
