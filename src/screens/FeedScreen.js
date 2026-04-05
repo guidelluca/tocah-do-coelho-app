@@ -416,6 +416,7 @@ export function FeedScreen() {
                 <MaterialCommunityIcons name="comment-text-outline" size={15} color={activePurple} />
               </Pressable>
               <Pressable
+                hitSlop={10}
                 style={styles.feedDeleteBtn}
                 onPress={() =>
                   Alert.alert('Excluir post', 'Deseja realmente excluir este post?', [
@@ -510,6 +511,7 @@ export function FeedScreen() {
                       <View style={styles.replyTopActions}>
                         <Text style={styles.replyTime}>{formatRelativeTime(reply.ts)}</Text>
                         <Pressable
+                          hitSlop={10}
                           style={styles.replyDeleteBtn}
                           onPress={() =>
                             Alert.alert('Excluir comentario', 'Deseja realmente excluir este comentario?', [

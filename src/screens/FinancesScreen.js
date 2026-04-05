@@ -512,8 +512,13 @@ export function FinancesScreen() {
         onPress: async () => {
           try {
             const rowIndex = inferRowIndex(item, idx);
+            const match = type === 'contaFixa'
+              ? { conta: item?.conta || '', valor: item?.valor || '' }
+              : type === 'gastoColetivo'
+                ? { quem: item?.quem || '', oQue: item?.oQue || item?.descricao || '', quanto: item?.quanto || item?.valor || '' }
+                : { quem: item?.quem || '', paraQuem: item?.paraQuem || '', deveQuanto: item?.deveQuanto || item?.valor || '' };
             try {
-              await deleteFinanceEntry({ entryType: type, rowIndex });
+              await deleteFinanceEntry({ entryType: type, rowIndex, match });
             } catch {
               if (type === 'contaFixa') {
                 await updateFinanceEntry({
@@ -764,7 +769,7 @@ export function FinancesScreen() {
                     <Pressable style={styles.iconBtn} onPress={() => openEditModal('contaFixa', c, idx)}>
                       <MaterialCommunityIcons name="pencil-outline" size={16} color="#6a1b9a" />
                     </Pressable>
-                    <Pressable style={styles.iconBtn} onPress={() => onDeleteEntry('contaFixa', c, idx)}>
+                    <Pressable hitSlop={10} style={styles.iconBtn} onPress={() => onDeleteEntry('contaFixa', c, idx)}>
                       <MaterialCommunityIcons name="trash-can-outline" size={16} color="#c62828" />
                     </Pressable>
                   </View>
@@ -816,7 +821,7 @@ export function FinancesScreen() {
                     <Pressable style={styles.iconBtn} onPress={() => openEditModal('gastoColetivo', g, idx)}>
                       <MaterialCommunityIcons name="pencil-outline" size={16} color="#6a1b9a" />
                     </Pressable>
-                    <Pressable style={styles.iconBtn} onPress={() => onDeleteEntry('gastoColetivo', g, idx)}>
+                    <Pressable hitSlop={10} style={styles.iconBtn} onPress={() => onDeleteEntry('gastoColetivo', g, idx)}>
                       <MaterialCommunityIcons name="trash-can-outline" size={16} color="#c62828" />
                     </Pressable>
                   </View>
@@ -868,7 +873,7 @@ export function FinancesScreen() {
                     <Pressable style={styles.iconBtn} onPress={() => openEditModal('acertoIndividual', a, idx)}>
                       <MaterialCommunityIcons name="pencil-outline" size={16} color="#6a1b9a" />
                     </Pressable>
-                    <Pressable style={styles.iconBtn} onPress={() => onDeleteEntry('acertoIndividual', a, idx)}>
+                    <Pressable hitSlop={10} style={styles.iconBtn} onPress={() => onDeleteEntry('acertoIndividual', a, idx)}>
                       <MaterialCommunityIcons name="trash-can-outline" size={16} color="#c62828" />
                     </Pressable>
                   </View>

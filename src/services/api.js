@@ -388,8 +388,8 @@ export async function updateFinanceEntry({ entryType, rowIndex, payload }) {
   return postJson({ action: 'updateFinanceEntry', entryType: normalizeEntryType(entryType), rowIndex, payload });
 }
 
-export async function deleteFinanceEntry({ entryType, rowIndex }) {
-  return postJson({ action: 'deleteFinanceEntry', entryType: normalizeEntryType(entryType), rowIndex });
+export async function deleteFinanceEntry({ entryType, rowIndex, match = {} }) {
+  return postJson({ action: 'deleteFinanceEntry', entryType: normalizeEntryType(entryType), rowIndex, match });
 }
 
 export async function toggleContaStatus({ rowIndex, status }) {

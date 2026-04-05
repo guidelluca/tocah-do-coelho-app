@@ -764,21 +764,76 @@ app.post('/api', async (req, res) => {
     }
 
     if (action === 'deleteFinanceEntry') {
-      const { entryType, rowIndex } = req.body || {};
+      const { entryType, rowIndex, match = {} } = req.body || {};
       const row = Number(rowIndex);
-      if (!Number.isFinite(row) || row < 1) return badRequest(res, 'rowIndex invalido.');
       const activeFinanceSheet = await resolveActiveFinanceSheet();
+      const rows = await readRangeWithFallback(`${activeFinanceSheet}!A:Z`, ['ABR_2026!A:Z', 'MAR_2026!A:Z']);
+
+      const normalizeText = (value) => String(value || '').trim().toUpperCase();
+      const normalizeMoneyLike = (value) => {
+        const n = toNumberLike(value);
+        return Number.isFinite(n) ? Number(n).toFixed(2) : '';
+      };
+      const pickResolvedRow = () => {
+        if (Number.isFinite(row) && row >= 1) return row;
+        if (entryType === 'conta_fixa') {
+          const conta = normalizeText(match?.conta);
+          const valor = normalizeMoneyLike(match?.valor);
+          if (!conta) return 0;
+          for (let i = 0; i < rows.length; i += 1) {
+            const r = rows[i] || [];
+            const rowConta = normalizeText(r[1]);
+            const rowValor = normalizeMoneyLike(r[2]);
+            if (rowConta === conta && (!valor || rowValor === valor)) return i + 1;
+          }
+        }
+        if (entryType === 'gasto_coletivo') {
+          const quem = normalizeText(match?.quem);
+          const oQue = normalizeText(match?.oQue);
+          const quanto = normalizeMoneyLike(match?.quanto);
+          if (!quem && !oQue) return 0;
+          for (let i = rows.length - 1; i >= 0; i -= 1) {
+            const r = rows[i] || [];
+            const rowQuem = normalizeText(r[9]);
+            const rowQuanto = normalizeMoneyLike(r[10]);
+            const rowOQue = normalizeText(r[11]);
+            const quemOk = !quem || rowQuem === quem;
+            const oQueOk = !oQue || rowOQue === oQue;
+            const quantoOk = !quanto || rowQuanto === quanto;
+            if (quemOk && oQueOk && quantoOk) return i + 1;
+          }
+        }
+        if (entryType === 'acerto_individual') {
+          const quem = normalizeText(match?.quem);
+          const paraQuem = normalizeText(match?.paraQuem);
+          const deveQuanto = normalizeMoneyLike(match?.deveQuanto);
+          if (!quem && !paraQuem) return 0;
+          for (let i = rows.length - 1; i >= 0; i -= 1) {
+            const r = rows[i] || [];
+            const rowQuem = normalizeText(r[19]);
+            const rowDeveQuanto = normalizeMoneyLike(r[20]);
+            const rowParaQuem = normalizeText(r[21]);
+            const quemOk = !quem || rowQuem === quem;
+            const paraQuemOk = !paraQuem || rowParaQuem === paraQuem;
+            const valorOk = !deveQuanto || rowDeveQuanto === deveQuanto;
+            if (quemOk && paraQuemOk && valorOk) return i + 1;
+          }
+        }
+        return 0;
+      };
+      const resolvedRow = pickResolvedRow();
+      if (!resolvedRow || resolvedRow < 1) return badRequest(res, 'Nao foi possivel localizar a linha para exclusao.');
 
       if (entryType === 'conta_fixa') {
-        await updateRange(`${activeFinanceSheet}!B${row}:F${row}`, ['', '', '', '', '']);
+        await updateRange(`${activeFinanceSheet}!B${resolvedRow}:F${resolvedRow}`, ['', '', '', '', '']);
         return res.json({ ok: true, message: 'Conta fixa removida.' });
       }
       if (entryType === 'gasto_coletivo') {
-        await updateRange(`${activeFinanceSheet}!J${row}:M${row}`, ['', '', '', '']);
+        await updateRange(`${activeFinanceSheet}!J${resolvedRow}:M${resolvedRow}`, ['', '', '', '']);
         return res.json({ ok: true, message: 'Gasto coletivo removido.' });
       }
       if (entryType === 'acerto_individual') {
-        await updateRange(`${activeFinanceSheet}!T${row}:W${row}`, ['', '', '', '']);
+        await updateRange(`${activeFinanceSheet}!T${resolvedRow}:W${resolvedRow}`, ['', '', '', '']);
         return res.json({ ok: true, message: 'Acerto individual removido.' });
       }
       return badRequest(res, 'entryType invalido.');
