@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, Image, Modal, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, AppState, Image, Modal, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
@@ -200,6 +200,13 @@ export function HomeScreen() {
     const unsubscribe = subscribeApiConnectionStatus((next) => setApiStatus(next));
     return unsubscribe;
   }, []);
+
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') load('silent');
+    });
+    return () => sub.remove();
+  }, [load]);
 
   useFocusEffect(
     useCallback(() => {

@@ -251,13 +251,37 @@ async function getSheetsHealth() {
 }
 
 function parseMonthSheetTitle(title) {
-  const m = String(title || '').match(/^([A-Za-zÇç]{3})_(\d{4})$/);
-  if (!m) return null;
-  const mon = m[1].toUpperCase();
-  const year = Number(m[2]);
-  const monthIdx = MONTHS_PT.indexOf(mon);
-  if (monthIdx < 0) return null;
-  return { title, year, monthIdx };
+  const raw = String(title || '').trim();
+  const m3 = raw.match(/^([A-Za-zÇç]{3})_(\d{4})$/);
+  if (m3) {
+    const mon = m3[1].toUpperCase();
+    const year = Number(m3[2]);
+    const monthIdx = MONTHS_PT.indexOf(mon);
+    if (monthIdx >= 0) return { title: raw, year, monthIdx };
+  }
+  const m4 = raw.match(/^([A-Za-zÇç]{4})_(\d{4})$/);
+  if (m4) {
+    const mon = m4[1].toUpperCase();
+    const year = Number(m4[2]);
+    if (mon === 'MAIO') return { title: raw, year, monthIdx: 4 };
+  }
+  return null;
+}
+
+/** Mês civil da república (Brasil), não o UTC do servidor — evita ficar no mês errado perto da virada. */
+function getSaoPauloYearMonth() {
+  const now = new Date();
+  const parts = new Intl.DateTimeFormat('en', {
+    timeZone: 'America/Sao_Paulo',
+    year: 'numeric',
+    month: 'numeric',
+  }).formatToParts(now);
+  const year = Number(parts.find((p) => p.type === 'year')?.value);
+  const month = Number(parts.find((p) => p.type === 'month')?.value);
+  if (Number.isFinite(year) && Number.isFinite(month) && month >= 1 && month <= 12) {
+    return { year, month };
+  }
+  return { year: now.getUTCFullYear(), month: now.getUTCMonth() + 1 };
 }
 
 async function getSpreadsheetTitles() {
@@ -269,16 +293,70 @@ async function getSpreadsheetTitles() {
   return (res.data.sheets || []).map((s) => String(s.properties?.title || '').trim()).filter(Boolean);
 }
 
+function monthSheetOrder(entry) {
+  return entry.year * 12 + entry.monthIdx;
+}
+
+function trimSheetTitles(titles) {
+  return (titles || []).map((t) => String(t || '').trim()).filter(Boolean);
+}
+
+/**
+ * Aba de finanças ativa (São Paulo): entre abas MMM_YYYY, usa a mais recente entre
+ * mês atual e próximo mês (ex.: com ABR_2026 e MAI_2026 em abril, lê maio — quem já lançou no mês seguinte).
+ * Sem abas no padrão, tenta FINANCE_SHEET; senão o nome canónico do mês atual.
+ */
+function resolveActiveFinanceSheetFromTitles(titlesRaw) {
+  const titles = trimSheetTitles(titlesRaw);
+  const { year, month } = getSaoPauloYearMonth();
+  const currentName = `${MONTHS_PT[month - 1]}_${year}`;
+
+  const findTitle = (want) => {
+    const w = String(want || '').trim();
+    const wu = w.toUpperCase();
+    return titles.find((t) => {
+      const u = t.toUpperCase();
+      return u === wu || u.replace(/\s+/g, '_') === wu;
+    });
+  };
+
+  const parsed = titles.map(parseMonthSheetTitle).filter(Boolean);
+  const currentOrder = year * 12 + (month - 1);
+  /** Permite o mês seguinte (lançamentos antecipados), mas não meses além disso. */
+  const maxOrderAllowed = currentOrder + 1;
+
+  let eligible = parsed.filter((p) => monthSheetOrder(p) <= maxOrderAllowed);
+  if (!eligible.length && parsed.length) {
+    eligible = parsed.filter((p) => monthSheetOrder(p) <= currentOrder);
+  }
+  if (!eligible.length && parsed.length) {
+    eligible = parsed.slice();
+  }
+
+  if (eligible.length) {
+    eligible.sort((a, b) => monthSheetOrder(b) - monthSheetOrder(a));
+    const pick = eligible[0].title;
+    const canonical = findTitle(pick);
+    return canonical || pick;
+  }
+
+  const fin = findTitle(FINANCE_SHEET);
+  if (fin) return fin;
+  if (titles.includes(FINANCE_SHEET)) return FINANCE_SHEET;
+  return currentName;
+}
+
 async function resolveActiveFinanceSheet() {
   const titles = await getSpreadsheetTitles();
-  const now = new Date();
-  const currentName = `${MONTHS_PT[now.getMonth()]}_${now.getFullYear()}`;
-  if (titles.includes(currentName)) return currentName;
-  if (titles.includes(FINANCE_SHEET)) return FINANCE_SHEET;
-  const parsed = titles.map(parseMonthSheetTitle).filter(Boolean);
-  if (!parsed.length) return FINANCE_SHEET;
-  parsed.sort((a, b) => (a.year === b.year ? b.monthIdx - a.monthIdx : b.year - a.year));
-  return parsed[0].title;
+  return resolveActiveFinanceSheetFromTitles(titles);
+}
+
+/** Uma leitura da planilha de mês ativo — sem fallback fixo ABR/MAR (isso forçava dados de abril). */
+async function readActiveFinanceSheetRows() {
+  const titles = await getSpreadsheetTitles();
+  const activeSheet = resolveActiveFinanceSheetFromTitles(titles);
+  const rows = await readRange(`${activeSheet}!A:Z`);
+  return { activeSheet, rows };
 }
 
 function toNumberLike(value) {
@@ -494,8 +572,7 @@ app.get('/api', async (req, res) => {
     if (!action) return badRequest(res, 'action obrigatoria');
 
     if (action === 'getDados') {
-      const activeFinanceSheet = await resolveActiveFinanceSheet();
-      const rows = await readRangeWithFallback(`${activeFinanceSheet}!A:Z`, ['ABR_2026!A:Z', 'MAR_2026!A:Z']);
+      const { activeSheet: activeFinanceSheet, rows } = await readActiveFinanceSheetRows();
       const target = String(usuario || '').trim().toLowerCase();
       let aluguel = '--';
       let nome = usuario || 'Morador';
@@ -600,8 +677,7 @@ app.get('/api', async (req, res) => {
     }
 
     if (action === 'getFinanceSnapshot') {
-      const activeFinanceSheet = await resolveActiveFinanceSheet();
-      const rows = await readRangeWithFallback(`${activeFinanceSheet}!A:Z`, ['ABR_2026!A:Z', 'MAR_2026!A:Z']);
+      const { activeSheet: activeFinanceSheet, rows } = await readActiveFinanceSheetRows();
       const parsed = parseFinanceSnapshot(rows);
       return res.json({ ok: true, mesReferencia: activeFinanceSheet, ...parsed });
     }
@@ -643,8 +719,7 @@ app.post('/api', async (req, res) => {
     }
     if (action === 'addFinanceEntry') {
       const { entryType, usuario = '', payload = {} } = req.body || {};
-      const activeFinanceSheet = await resolveActiveFinanceSheet();
-      const rows = await readRangeWithFallback(`${activeFinanceSheet}!A:Z`, ['ABR_2026!A:Z', 'MAR_2026!A:Z']);
+      const { activeSheet: activeFinanceSheet, rows } = await readActiveFinanceSheetRows();
 
       if (entryType === 'conta_fixa') {
         const headerIdx = findRowIndex(rows, (r) => getCell(r, 1).toLowerCase() === 'conta' && getCell(r, 2).toLowerCase() === 'valor');
@@ -766,8 +841,7 @@ app.post('/api', async (req, res) => {
     if (action === 'deleteFinanceEntry') {
       const { entryType, rowIndex, match = {} } = req.body || {};
       const row = Number(rowIndex);
-      const activeFinanceSheet = await resolveActiveFinanceSheet();
-      const rows = await readRangeWithFallback(`${activeFinanceSheet}!A:Z`, ['ABR_2026!A:Z', 'MAR_2026!A:Z']);
+      const { activeSheet: activeFinanceSheet, rows } = await readActiveFinanceSheetRows();
 
       const normalizeText = (value) => String(value || '').trim().toUpperCase();
       const normalizeMoneyLike = (value) => {

@@ -20,6 +20,11 @@ const webOrigin =
   typeof window !== 'undefined' && window?.location?.origin
     ? String(window.location.origin).trim()
     : '';
+/** Prévia estática em 127.0.0.1/localhost: usa /api no mesmo host (proxy em scripts/web-preview.cjs), mesmo com EXPO_PUBLIC_API_URL de produção no bundle. */
+const isLoopbackWeb =
+  typeof window !== 'undefined' &&
+  (window.location?.hostname === '127.0.0.1' || window.location?.hostname === 'localhost');
+const loopbackSameOriginApi = isLoopbackWeb && webOrigin ? `${webOrigin}/api` : '';
 const FALLBACK_REMOTE_API = 'https://tocah-do-coelho-app.onrender.com/api';
 
 function normalizeApiBase(raw = '') {
@@ -29,6 +34,7 @@ function normalizeApiBase(raw = '') {
 }
 
 const API_URL =
+  loopbackSameOriginApi ||
   normalizeApiBase(process.env.EXPO_PUBLIC_API_URL) ||
   (webOrigin ? `${webOrigin}/api` : '') ||
   FALLBACK_REMOTE_API ||
@@ -50,6 +56,7 @@ function isValidHost(raw = '') {
 const API_BASE_CANDIDATES = Array.from(
   new Set(
     [
+      loopbackSameOriginApi,
       normalizeApiBase(process.env.EXPO_PUBLIC_API_URL),
       FALLBACK_REMOTE_API,
       webOrigin ? `${webOrigin}/api` : '',
@@ -113,6 +120,24 @@ function buildCacheKey(url) {
   } catch {
     return `${CACHE_KEY_PREFIX}${String(url || '').trim()}`;
   }
+}
+
+/** YYYY-MM no fuso da república — muda na virada do mês e evita reusar cache do AsyncStorage com aba antiga. */
+function financeMonthRefQuery() {
+  try {
+    const ymd = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/Sao_Paulo',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date());
+    const ym = String(ymd || '').slice(0, 7);
+    if (/^\d{4}-\d{2}$/.test(ym)) return `refYm=${encodeURIComponent(ym)}`;
+  } catch {
+    // ignore
+  }
+  const d = new Date();
+  return `refYm=${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
 
 async function readCachedPayload(url) {
@@ -347,7 +372,7 @@ function toSheetBool(value) {
 }
 
 export async function getFinanceSnapshot() {
-  return requestJson(`${API_URL}?action=getFinanceSnapshot`);
+  return requestJson(`${API_URL}?action=getFinanceSnapshot&${financeMonthRefQuery()}`);
 }
 
 export async function getApiHealth() {
@@ -397,7 +422,9 @@ export async function toggleContaStatus({ rowIndex, status }) {
 }
 
 export async function getDados(usuario = 'GUILHERME') {
-  return requestJson(`${API_URL}?action=getDados&usuario=${encodeURIComponent(usuario)}`);
+  return requestJson(
+    `${API_URL}?action=getDados&usuario=${encodeURIComponent(usuario)}&${financeMonthRefQuery()}`
+  );
 }
 
 export async function getCaixinha() {

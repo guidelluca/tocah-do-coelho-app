@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, Image, Modal, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, AppState, Image, Modal, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { addFinanceEntry, deleteFinanceEntry, getApiConnectionStatus, getApiHealth, getFinanceSnapshot, subscribeApiConnectionStatus, toggleContaStatus, updateFinanceEntry } from '../services/api';
@@ -200,6 +200,13 @@ export function FinancesScreen() {
   useEffect(() => {
     load();
   }, []);
+
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') load('silent');
+    });
+    return () => sub.remove();
+  }, [load]);
 
   useFocusEffect(
     useCallback(() => {

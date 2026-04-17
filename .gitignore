@@ -7,5 +7,9 @@ backups/
 .env
 backend/.env
 .env.*
+!.env.example
 *.log
 .DS_Store
+.web-preview/
+backend/data/
+portfolio-mockups/
