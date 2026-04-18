@@ -16,13 +16,36 @@ const {
   DADOS_RANGE = 'DadosApp!A:C',
   CAIXINHA_RANGE = 'Caixinha!C2',
   TAREFA_RANGE = 'Painel da Semana!A:Z',
-  FINANCE_SHEET = 'ABR_2026',
+  FINANCE_SHEET = 'MAI_2026',
   RATINGS_SHEET = 'AvaliacoesTarefas',
   TASK_FEED_SHEET = 'TarefasFeed',
   ADMIN_LOG_SHEET = 'AdminLogs',
   TASK_PHOTOS_SHEET = 'TarefasFotos',
 } = process.env;
 const MONTHS_PT = ['JAN', 'FEV', 'MAR', 'ABR', 'MAI', 'JUN', 'JUL', 'AGO', 'SET', 'OUT', 'NOV', 'DEZ'];
+/** Nomes completos (sem acento) → índice 0..11, para abas tipo ABRIL_2026 */
+const MONTHS_PT_LONG = {
+  JANEIRO: 0,
+  FEVEREIRO: 1,
+  MARCO: 2,
+  ABRIL: 3,
+  MAIO: 4,
+  JUNHO: 5,
+  JULHO: 6,
+  AGOSTO: 7,
+  SETEMBRO: 8,
+  OUTUBRO: 9,
+  NOVEMBRO: 10,
+  DEZEMBRO: 11,
+};
+
+function stripMonthNameDiacritics(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[Çç]/g, (c) => (c === 'Ç' ? 'C' : 'c'))
+    .toUpperCase();
+}
 const RESIDENTS = ['ALLAN', 'RAMON', 'VITOR', 'GUSTAVO', 'GUILHERME'];
 const MAX_SHEET_CELL_CHARS = 45000;
 const READ_CACHE_TTL_MS = 120000;
@@ -133,6 +156,11 @@ function parseFinanceSnapshot(rows) {
   }
 
   return { residents, contas, gastosColetivos, acertosIndividuais };
+}
+
+function financeSnapshotHasResidents(rows) {
+  const { residents } = parseFinanceSnapshot(rows);
+  return Array.isArray(residents) && residents.length > 0;
 }
 
 function findFirstEmptyByCol(rows, colIdx, from, to) {
@@ -265,6 +293,23 @@ function parseMonthSheetTitle(title) {
     const year = Number(m4[2]);
     if (mon === 'MAIO') return { title: raw, year, monthIdx: 4 };
   }
+  const mNum = raw.match(/^(\d{1,2})_(\d{4})$/);
+  if (mNum) {
+    const mo = Number(mNum[1]);
+    const year = Number(mNum[2]);
+    if (year >= 2000 && year <= 2100 && mo >= 1 && mo <= 12) {
+      return { title: raw, year, monthIdx: mo - 1 };
+    }
+  }
+  const mLong = raw.match(/^([A-Za-zÇçÁÉÍÓÚÃÕáéíóúãõ\s]+)_(\d{4})$/);
+  if (mLong) {
+    const mon = stripMonthNameDiacritics(mLong[1]).replace(/\s+/g, '');
+    const year = Number(mLong[2]);
+    const monthIdx = MONTHS_PT_LONG[mon];
+    if (monthIdx !== undefined && year >= 2000 && year <= 2100) {
+      return { title: raw, year, monthIdx };
+    }
+  }
   return null;
 }
 
@@ -302,11 +347,10 @@ function trimSheetTitles(titles) {
 }
 
 /**
- * Aba de finanças ativa (São Paulo): entre abas MMM_YYYY, usa a mais recente entre
- * mês atual e próximo mês (ex.: com ABR_2026 e MAI_2026 em abril, lê maio — quem já lançou no mês seguinte).
- * Sem abas no padrão, tenta FINANCE_SHEET; senão o nome canónico do mês atual.
+ * Candidatos a aba de mês (São Paulo): mês atual e o seguinte, ordenados do mais recente ao mais antigo.
+ * Nomes aceites: JAN_2026, 04_2026, ABRIL_2026, etc.
  */
-function resolveActiveFinanceSheetFromTitles(titlesRaw) {
+function getMonthSheetResolution(titlesRaw) {
   const titles = trimSheetTitles(titlesRaw);
   const { year, month } = getSaoPauloYearMonth();
   const currentName = `${MONTHS_PT[month - 1]}_${year}`;
@@ -333,13 +377,21 @@ function resolveActiveFinanceSheetFromTitles(titlesRaw) {
     eligible = parsed.slice();
   }
 
-  if (eligible.length) {
-    eligible.sort((a, b) => monthSheetOrder(b) - monthSheetOrder(a));
-    const pick = eligible[0].title;
-    const canonical = findTitle(pick);
-    return canonical || pick;
-  }
+  eligible.sort((a, b) => monthSheetOrder(b) - monthSheetOrder(a));
+  const canonicalSheets = eligible.map((e) => findTitle(e.title) || e.title);
 
+  return { titles, currentName, findTitle, canonicalSheets };
+}
+
+/**
+ * Aba de finanças ativa (nome): primeiro candidato elegível. Para linhas com dados, ver readActiveFinanceSheetRows.
+ */
+function resolveActiveFinanceSheetFromTitles(titlesRaw) {
+  const { titles, currentName, findTitle, canonicalSheets } = getMonthSheetResolution(titlesRaw);
+  if (canonicalSheets.length) return canonicalSheets[0];
+
+  const cur = findTitle(currentName);
+  if (cur) return cur;
   const fin = findTitle(FINANCE_SHEET);
   if (fin) return fin;
   if (titles.includes(FINANCE_SHEET)) return FINANCE_SHEET;
@@ -351,12 +403,33 @@ async function resolveActiveFinanceSheet() {
   return resolveActiveFinanceSheetFromTitles(titles);
 }
 
-/** Uma leitura da planilha de mês ativo — sem fallback fixo ABR/MAR (isso forçava dados de abril). */
+/**
+ * Lê a aba de mês: entre candidatos elegíveis (mais recente primeiro), prefere a primeira que já tenha
+ * linhas de moradores — evita ficar preso em aba nova vazia enquanto o mês anterior ainda tem dados.
+ */
 async function readActiveFinanceSheetRows() {
   const titles = await getSpreadsheetTitles();
-  const activeSheet = resolveActiveFinanceSheetFromTitles(titles);
-  const rows = await readRange(`${activeSheet}!A:Z`);
-  return { activeSheet, rows };
+  const { canonicalSheets, titles: titleList, currentName, findTitle } = getMonthSheetResolution(titles);
+
+  if (canonicalSheets.length) {
+    for (const sheet of canonicalSheets) {
+      try {
+        const rows = await readRange(`${sheet}!A:Z`);
+        if (financeSnapshotHasResidents(rows)) {
+          return { activeSheet: sheet, rows };
+        }
+      } catch {
+        // tenta próxima aba
+      }
+    }
+    const sheet = canonicalSheets[0];
+    const rows = await readRange(`${sheet}!A:Z`);
+    return { activeSheet: sheet, rows };
+  }
+
+  const primary = resolveActiveFinanceSheetFromTitles(titleList);
+  const rows = await readRange(`${primary}!A:Z`);
+  return { activeSheet: primary, rows };
 }
 
 function toNumberLike(value) {
