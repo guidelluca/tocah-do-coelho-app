@@ -16,21 +16,21 @@ const {
   DADOS_RANGE = 'DadosApp!A:C',
   CAIXINHA_RANGE = 'Caixinha!C2',
   TAREFA_RANGE = 'Painel da Semana!A:Z',
-  /** Opcional: aba fixa (legado). Se vazio, usa só abas MON_YYYY alinhadas ao mês civil em America/Sao_Paulo (MAI_2026, JUN_2026, …). */
-  FINANCE_SHEET,
-  /** Se definido (ex. JUN_2026), ignora o mês civil e lê sempre esta aba, desde que exista na planilha. Tire a variável ou deixe vazio para voltar ao automático. */
-  FORCE_FINANCE_SHEET,
   /**
-   * Soma ao mês civil (SP) para decidir qual aba MON_YYYY é a “referência” das finanças.
-   * 0 = aba do mês civil. 1 = um mês à frente (ex.: em abril já trabalham em MAI_2026).
-   * Intervalo recomendado -12..12.
+   * Aba das finanças: nome exacto ou normalizado (MAI_2026, MAI-2026).
+   * Se não definires no Render/.env, usa MAIO por defeito (MAI_2026).
+   * Para mudar: FINANCE_ACTIVE_SHEET=JUN_2026 (e redeploy). Mês civil automático: FINANCE_ACTIVE_SHEET=AUTO
    */
-  FINANCE_MONTH_OFFSET,
+  FINANCE_ACTIVE_SHEET,
+  /** @deprecated — usa FINANCE_ACTIVE_SHEET */
+  FORCE_FINANCE_SHEET,
   RATINGS_SHEET = 'AvaliacoesTarefas',
   TASK_FEED_SHEET = 'TarefasFeed',
   ADMIN_LOG_SHEET = 'AdminLogs',
   TASK_PHOTOS_SHEET = 'TarefasFotos',
 } = process.env;
+/** Quando FINANCE_ACTIVE_SHEET não está definida e não é AUTO — alinhado à aba MAI_2026. */
+const DEFAULT_FINANCE_ACTIVE_SHEET = 'MAI_2026';
 const MONTHS_PT = ['JAN', 'FEV', 'MAR', 'ABR', 'MAI', 'JUN', 'JUL', 'AGO', 'SET', 'OUT', 'NOV', 'DEZ'];
 /** Nomes completos (sem acento) → índice 0..11, para abas tipo ABRIL_2026 */
 const MONTHS_PT_LONG = {
@@ -373,25 +373,6 @@ function getSaoPauloYearMonth() {
   return { year: now.getUTCFullYear(), month: now.getUTCMonth() + 1 };
 }
 
-/** Mês/ano usados para escolher aba e candidatos (civil SP + FINANCE_MONTH_OFFSET). */
-function getFinanceReferenceYearMonth() {
-  const civil = getSaoPauloYearMonth();
-  let off = Number.parseInt(String(FINANCE_MONTH_OFFSET || '0').trim(), 10);
-  if (!Number.isFinite(off)) off = 0;
-  off = Math.max(-12, Math.min(12, off));
-  let m = civil.month + off;
-  let y = civil.year;
-  while (m > 12) {
-    m -= 12;
-    y += 1;
-  }
-  while (m < 1) {
-    m += 12;
-    y -= 1;
-  }
-  return { year: y, month: m, civilYear: civil.year, civilMonth: civil.month, offset: off };
-}
-
 async function getSpreadsheetTitles() {
   const sheets = await getSheetsApi();
   const res = await sheets.spreadsheets.get({
@@ -409,7 +390,7 @@ function trimSheetTitles(titles) {
   return (titles || []).map((t) => String(t || '').trim()).filter(Boolean);
 }
 
-/** Qualquer aba cujo título parseie para o mesmo mês civil (ex. Abril 2026 ou ABR_2026). */
+/** Qualquer aba cujo título parseie para o mesmo mês civil (ex. nome longo ou MON_YYYY). */
 function findTitleByCivilMonth(titles, year, month) {
   const wantOrder = year * 12 + (month - 1);
   for (const t of titles) {
@@ -420,14 +401,12 @@ function findTitleByCivilMonth(titles, year, month) {
 }
 
 /**
- * Candidatos a aba de mês: até ao **mês de referência** (civil em SP + FINANCE_MONTH_OFFSET), depois só mês+1 se não houver aba ≤ referência.
- * Com offset 0, não entra o mês seguinte na lista principal (evita MAI a substituir ABR indevidamente). Com offset 1, a referência é maio em abril → MAI_2026.
+ * Candidatos a aba quando em modo AUTO: até ao mês civil (SP); se não houver, tenta só mês seguinte; senão todas.
  * Nomes aceites: JAN_2026, 04_2026, ABRIL_2026, etc.
  */
 function getMonthSheetResolution(titlesRaw) {
   const titles = trimSheetTitles(titlesRaw);
-  const ref = getFinanceReferenceYearMonth();
-  const { year, month, civilYear, civilMonth, offset: financeMonthOffset } = ref;
+  const { year, month } = getSaoPauloYearMonth();
   const currentName = `${MONTHS_PT[month - 1]}_${year}`;
 
   const normalizeTabKey = (t) =>
@@ -457,47 +436,35 @@ function getMonthSheetResolution(titlesRaw) {
   eligible.sort((a, b) => monthSheetOrder(b) - monthSheetOrder(a));
   const canonicalSheets = eligible.map((e) => findTitle(e.title) || e.title);
 
-  return {
-    titles,
-    currentName,
-    findTitle,
-    canonicalSheets,
-    year,
-    month,
-    civilYear,
-    civilMonth,
-    financeMonthOffset,
-  };
+  return { titles, currentName, findTitle, canonicalSheets, year, month };
 }
 
-/** Aba forçada por env (nome real na planilha, com normalização MAI-2026 → MAI_2026). */
-function pickForcedFinanceSheetTitle(titlesRaw) {
-  const forced = String(FORCE_FINANCE_SHEET || '').trim();
-  if (!forced) return null;
+/**
+ * Aba definida por ti (FINANCE_ACTIVE_SHEET). AUTO → null (usa mês civil). Sem env → DEFAULT (MAI_2026).
+ */
+function pickManualFinanceSheetTitle(titlesRaw) {
+  const fromEnv = String(FINANCE_ACTIVE_SHEET || '').trim();
+  const legacy = String(FORCE_FINANCE_SHEET || '').trim();
+  let want = fromEnv || legacy;
+  if (/^AUTO$/i.test(want)) return null;
+  if (!want) want = DEFAULT_FINANCE_ACTIVE_SHEET;
   const { findTitle, titles } = getMonthSheetResolution(titlesRaw);
-  const hit = findTitle(forced);
+  const hit = findTitle(want);
   if (hit) return hit;
-  if (titles.includes(forced)) return forced;
+  if (titles.includes(want)) return want;
   return null;
 }
 
 /**
- * Aba de finanças ativa (nome): **mês civil em SP** (ex. ABR_2026) se a aba existir; senão o candidato elegível mais recente.
+ * Aba de finanças: FINANCE_ACTIVE_SHEET (ou defeito MAIO); se AUTO, mês civil em SP e candidatos.
  */
 function resolveActiveFinanceSheetFromTitles(titlesRaw) {
-  const forced = pickForcedFinanceSheetTitle(titlesRaw);
-  if (forced) return forced;
+  const manual = pickManualFinanceSheetTitle(titlesRaw);
+  if (manual) return manual;
   const { titles, currentName, findTitle, canonicalSheets, year, month } = getMonthSheetResolution(titlesRaw);
   const preferred = findTitle(currentName) || findTitleByCivilMonth(titles, year, month);
   if (preferred) return preferred;
   if (canonicalSheets.length) return canonicalSheets[0];
-
-  const finSheet = String(FINANCE_SHEET || '').trim();
-  if (finSheet) {
-    const fin = findTitle(finSheet);
-    if (fin) return fin;
-    if (titles.includes(finSheet)) return finSheet;
-  }
   return currentName;
 }
 
@@ -507,15 +474,14 @@ async function resolveActiveFinanceSheet() {
 }
 
 /**
- * Lê a aba de mês: se existir aba do **mês civil atual** (SP), usa-a sempre (mesmo vazia / sem moradores no snapshot).
- * Só nos fallbacks procura aba com dados de moradores, para não “saltar” para o mês seguinte só porque a aba nova ainda está em branco.
+ * Lê a aba: manual (FINANCE_ACTIVE_SHEET / defeito MAIO) ou modo AUTO como acima.
  */
 async function readActiveFinanceSheetRows() {
   const titles = await getSpreadsheetTitles();
-  const forcedTitle = pickForcedFinanceSheetTitle(titles);
-  if (forcedTitle) {
-    const rows = await readRange(a1RangeForSheet(forcedTitle, 'A:Z'));
-    return { activeSheet: forcedTitle, rows };
+  const manualTitle = pickManualFinanceSheetTitle(titles);
+  if (manualTitle) {
+    const rows = await readRange(a1RangeForSheet(manualTitle, 'A:Z'));
+    return { activeSheet: manualTitle, rows };
   }
   const { canonicalSheets, titles: titleList, currentName, findTitle, year, month } = getMonthSheetResolution(titles);
   const preferred = findTitle(currentName) || findTitleByCivilMonth(titles, year, month);
@@ -897,32 +863,35 @@ app.get('/api', async (req, res) => {
 
     if (action === 'getFinancePreview') {
       const titles = await getSpreadsheetTitles();
+      const civil = getSaoPauloYearMonth();
       const meta = getMonthSheetResolution(titles);
       const preferred =
         meta.findTitle(meta.currentName) || findTitleByCivilMonth(meta.titles, meta.year, meta.month);
       const resolvedName = resolveActiveFinanceSheetFromTitles(titles);
       const { activeSheet, rows } = await readActiveFinanceSheetRows();
       const snapshot = parseFinanceSnapshot(rows);
+      const envActive = String(FINANCE_ACTIVE_SHEET || '').trim();
+      const envLegacy = String(FORCE_FINANCE_SHEET || '').trim();
+      const modeCivilAuto = /^AUTO$/i.test(envActive || envLegacy);
+      const manualResolved = pickManualFinanceSheetTitle(titles);
+      const configuredTarget = modeCivilAuto
+        ? 'AUTO'
+        : envActive || envLegacy || `default:${DEFAULT_FINANCE_ACTIVE_SHEET}`;
       return res.json({
         ok: true,
         serverUtc: new Date().toISOString(),
-        saoPauloCivil: {
-          year: meta.civilYear,
-          month: meta.civilMonth,
-        },
-        financeReference: {
-          year: meta.year,
-          month: meta.month,
-          expectedTab: meta.currentName,
-          monthOffset: meta.financeMonthOffset,
-        },
+        saoPauloCivil: civil,
+        automaticTabIfCivilMode: `${MONTHS_PT[civil.month - 1]}_${civil.year}`,
+        financeActiveSheetEnv: envActive || null,
+        financeActiveSheetLegacyEnv: envLegacy || null,
+        modeCivilAuto,
+        defaultActiveSheetWhenUnset: DEFAULT_FINANCE_ACTIVE_SHEET,
+        configuredSheetTarget,
+        manualSheetResolved: manualResolved,
         preferredTabInSpreadsheet: preferred || null,
         resolvedWithoutReadingRows: resolvedName,
         activeSheetUsed: activeSheet,
         canonicalMonthTabsNewestFirst: meta.canonicalSheets,
-        financeEnvFallback: String(FINANCE_SHEET || '').trim() || null,
-        forceFinanceSheetEnv: String(FORCE_FINANCE_SHEET || '').trim() || null,
-        forcedSheetResolved: pickForcedFinanceSheetTitle(titles) || null,
         snapshotSummary: {
           residents: snapshot.residents?.length ?? 0,
           contas: snapshot.contas?.length ?? 0,
