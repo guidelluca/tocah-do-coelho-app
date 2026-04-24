@@ -22,9 +22,6 @@
       },
       "edgeToEdgeEnabled": true
     },
-    "experiments": {
-      "baseUrl": "/tocah-do-coelho-app"
-    },
     "web": {
       "output": "single",
       "favicon": "./assets/favicon.png",

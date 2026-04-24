@@ -71,7 +71,19 @@ function proxyToBackend(clientReq, clientRes) {
 const repoRoot = path.join(__dirname, '..');
 const distDir = path.join(repoRoot, 'dist');
 const outDir = path.join(repoRoot, '.web-preview');
-const nestedDir = path.join(outDir, 'tocah-do-coelho-app');
+
+/** Lê o prefixo do export (ex. /tocah-do-coelho-app) a partir do index.html gerado pelo Expo. */
+function detectWebBaseFromDistHtml(distRoot) {
+  const indexPath = path.join(distRoot, 'index.html');
+  if (!fs.existsSync(indexPath)) return '';
+  const html = fs.readFileSync(indexPath, 'utf8');
+  const m = html.match(/src="([^"]+\/_expo\/static\/[^"]+\.js)"/);
+  if (!m) return '';
+  const full = m[1];
+  const idx = full.indexOf('/_expo/');
+  if (idx <= 0) return '';
+  return full.slice(0, idx).replace(/\/$/, '') || '';
+}
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -107,11 +119,24 @@ function copyDistToPreview() {
     console.error('Pasta dist/ não existe. Rode: npm run build:web');
     process.exit(1);
   }
+  const webBase = detectWebBaseFromDistHtml(distDir);
+  const nestedSegment = String(webBase || '').replace(/^\//, '');
+
   fs.rmSync(outDir, { recursive: true, force: true });
-  fs.mkdirSync(nestedDir, { recursive: true });
-  for (const name of fs.readdirSync(distDir)) {
-    fs.cpSync(path.join(distDir, name), path.join(nestedDir, name), { recursive: true });
+  fs.mkdirSync(outDir, { recursive: true });
+
+  if (nestedSegment) {
+    const nestedDir = path.join(outDir, nestedSegment);
+    fs.mkdirSync(nestedDir, { recursive: true });
+    for (const name of fs.readdirSync(distDir)) {
+      fs.cpSync(path.join(distDir, name), path.join(nestedDir, name), { recursive: true });
+    }
+  } else {
+    for (const name of fs.readdirSync(distDir)) {
+      fs.cpSync(path.join(distDir, name), path.join(outDir, name), { recursive: true });
+    }
   }
+  return nestedSegment;
 }
 
 function sendFile(res, filePath) {
@@ -129,7 +154,7 @@ function sendFile(res, filePath) {
 }
 
 async function main() {
-  copyDistToPreview();
+  const nestedSegment = copyDistToPreview();
   const port = await getFreePort();
 
   const server = http.createServer((req, res) => {
@@ -146,8 +171,12 @@ async function main() {
 
     const raw = (req.url || '/').split('?')[0];
     if (raw === '/' || raw === '') {
-      res.writeHead(302, { Location: '/tocah-do-coelho-app/' });
-      res.end();
+      if (nestedSegment) {
+        res.writeHead(302, { Location: `/${nestedSegment}/` });
+        res.end();
+        return;
+      }
+      sendFile(res, path.join(outDir, 'index.html'));
       return;
     }
 
@@ -182,9 +211,10 @@ async function main() {
   });
 
   server.listen(port, '127.0.0.1', () => {
-    const url = `http://127.0.0.1:${port}/tocah-do-coelho-app/`;
+    const basePath = nestedSegment ? `/${nestedSegment}/` : '/';
+    const url = `http://127.0.0.1:${port}${basePath}`;
     console.log('');
-    console.log('  Prévia (export estático, igual deploy em subpasta):');
+    console.log('  Prévia (export estático; caminho igual ao do build atual):');
     console.log(`  ${url}`);
     console.log('');
     console.log(`  Proxy API: /api e /health → ${backendOrigin.origin}`);

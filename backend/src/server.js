@@ -16,7 +16,8 @@ const {
   DADOS_RANGE = 'DadosApp!A:C',
   CAIXINHA_RANGE = 'Caixinha!C2',
   TAREFA_RANGE = 'Painel da Semana!A:Z',
-  FINANCE_SHEET = 'MAI_2026',
+  /** Opcional: aba fixa (legado). Se vazio, usa só abas MON_YYYY alinhadas ao mês civil em America/Sao_Paulo (MAI_2026, JUN_2026, …). */
+  FINANCE_SHEET,
   RATINGS_SHEET = 'AvaliacoesTarefas',
   TASK_FEED_SHEET = 'TarefasFeed',
   ADMIN_LOG_SHEET = 'AdminLogs',
@@ -57,6 +58,17 @@ function badRequest(res, message) {
 
 function getCell(row = [], idx) {
   return String(row[idx] ?? '').trim();
+}
+
+/** Intervalo A1: nomes com espaco, hifen, comecando com digito, etc. precisam de aspas simples na API Sheets. */
+function a1RangeForSheet(sheetTitle, rangeTail) {
+  const name = String(sheetTitle || '').trim();
+  if (!name) throw new Error('Nome de aba vazio.');
+  const tail = String(rangeTail || '').trim();
+  const escaped = name.replace(/'/g, "''");
+  const safeUnquoted = /^[A-Za-z_][A-Za-z0-9_]*$/.test(name);
+  const prefix = safeUnquoted ? name : `'${escaped}'`;
+  return `${prefix}!${tail}`;
 }
 
 function findRowIndex(rows, predicate, from = 0) {
@@ -301,6 +313,30 @@ function parseMonthSheetTitle(title) {
       return { title: raw, year, monthIdx: mo - 1 };
     }
   }
+  const mNumSp = raw.match(/^(\d{1,2})[\s/-]+(\d{4})$/);
+  if (mNumSp) {
+    const mo = Number(mNumSp[1]);
+    const year = Number(mNumSp[2]);
+    if (year >= 2000 && year <= 2100 && mo >= 1 && mo <= 12) {
+      return { title: raw, year, monthIdx: mo - 1 };
+    }
+  }
+  const m3sp = raw.match(/^([A-Za-zÇç]{3})[\s-]+(\d{4})$/);
+  if (m3sp) {
+    const mon = m3sp[1].toUpperCase();
+    const year = Number(m3sp[2]);
+    const monthIdx = MONTHS_PT.indexOf(mon);
+    if (monthIdx >= 0) return { title: raw, year, monthIdx };
+  }
+  const mLongSp = raw.match(/^([A-Za-zÇçÁÉÍÓÚÃÕáéíóúãõ]+)[\s-]+(\d{4})$/);
+  if (mLongSp) {
+    const mon = stripMonthNameDiacritics(mLongSp[1]).replace(/\s+/g, '');
+    const year = Number(mLongSp[2]);
+    const monthIdx = MONTHS_PT_LONG[mon];
+    if (monthIdx !== undefined && year >= 2000 && year <= 2100) {
+      return { title: raw, year, monthIdx };
+    }
+  }
   const mLong = raw.match(/^([A-Za-zÇçÁÉÍÓÚÃÕáéíóúãõ\s]+)_(\d{4})$/);
   if (mLong) {
     const mon = stripMonthNameDiacritics(mLong[1]).replace(/\s+/g, '');
@@ -346,6 +382,16 @@ function trimSheetTitles(titles) {
   return (titles || []).map((t) => String(t || '').trim()).filter(Boolean);
 }
 
+/** Qualquer aba cujo título parseie para o mesmo mês civil (ex. Abril 2026 ou ABR_2026). */
+function findTitleByCivilMonth(titles, year, month) {
+  const wantOrder = year * 12 + (month - 1);
+  for (const t of titles) {
+    const p = parseMonthSheetTitle(t);
+    if (p && monthSheetOrder(p) === wantOrder) return String(t).trim();
+  }
+  return null;
+}
+
 /**
  * Candidatos a aba de mês (São Paulo): mês atual e o seguinte, ordenados do mais recente ao mais antigo.
  * Nomes aceites: JAN_2026, 04_2026, ABRIL_2026, etc.
@@ -355,13 +401,16 @@ function getMonthSheetResolution(titlesRaw) {
   const { year, month } = getSaoPauloYearMonth();
   const currentName = `${MONTHS_PT[month - 1]}_${year}`;
 
+  const normalizeTabKey = (t) =>
+    String(t || '')
+      .trim()
+      .toUpperCase()
+      .replace(/\s+/g, '_')
+      .replace(/-/g, '_');
   const findTitle = (want) => {
-    const w = String(want || '').trim();
-    const wu = w.toUpperCase();
-    return titles.find((t) => {
-      const u = t.toUpperCase();
-      return u === wu || u.replace(/\s+/g, '_') === wu;
-    });
+    const wu = normalizeTabKey(want);
+    if (!wu) return undefined;
+    return titles.find((t) => normalizeTabKey(t) === wu);
   };
 
   const parsed = titles.map(parseMonthSheetTitle).filter(Boolean);
@@ -380,21 +429,24 @@ function getMonthSheetResolution(titlesRaw) {
   eligible.sort((a, b) => monthSheetOrder(b) - monthSheetOrder(a));
   const canonicalSheets = eligible.map((e) => findTitle(e.title) || e.title);
 
-  return { titles, currentName, findTitle, canonicalSheets };
+  return { titles, currentName, findTitle, canonicalSheets, year, month };
 }
 
 /**
- * Aba de finanças ativa (nome): primeiro candidato elegível. Para linhas com dados, ver readActiveFinanceSheetRows.
+ * Aba de finanças ativa (nome): **mês civil em SP** (ex. ABR_2026) se a aba existir; senão o candidato elegível mais recente.
  */
 function resolveActiveFinanceSheetFromTitles(titlesRaw) {
-  const { titles, currentName, findTitle, canonicalSheets } = getMonthSheetResolution(titlesRaw);
+  const { titles, currentName, findTitle, canonicalSheets, year, month } = getMonthSheetResolution(titlesRaw);
+  const preferred = findTitle(currentName) || findTitleByCivilMonth(titles, year, month);
+  if (preferred) return preferred;
   if (canonicalSheets.length) return canonicalSheets[0];
 
-  const cur = findTitle(currentName);
-  if (cur) return cur;
-  const fin = findTitle(FINANCE_SHEET);
-  if (fin) return fin;
-  if (titles.includes(FINANCE_SHEET)) return FINANCE_SHEET;
+  const finSheet = String(FINANCE_SHEET || '').trim();
+  if (finSheet) {
+    const fin = findTitle(finSheet);
+    if (fin) return fin;
+    if (titles.includes(finSheet)) return finSheet;
+  }
   return currentName;
 }
 
@@ -404,17 +456,40 @@ async function resolveActiveFinanceSheet() {
 }
 
 /**
- * Lê a aba de mês: entre candidatos elegíveis (mais recente primeiro), prefere a primeira que já tenha
- * linhas de moradores — evita ficar preso em aba nova vazia enquanto o mês anterior ainda tem dados.
+ * Lê a aba de mês: se existir aba do **mês civil atual** (SP), usa-a sempre (mesmo vazia / sem moradores no snapshot).
+ * Só nos fallbacks procura aba com dados de moradores, para não “saltar” para o mês seguinte só porque a aba nova ainda está em branco.
  */
 async function readActiveFinanceSheetRows() {
   const titles = await getSpreadsheetTitles();
-  const { canonicalSheets, titles: titleList, currentName, findTitle } = getMonthSheetResolution(titles);
+  const { canonicalSheets, titles: titleList, currentName, findTitle, year, month } = getMonthSheetResolution(titles);
+  const preferred = findTitle(currentName) || findTitleByCivilMonth(titles, year, month);
 
-  if (canonicalSheets.length) {
-    for (const sheet of canonicalSheets) {
+  const orderedCandidates = [];
+  const seen = new Set();
+  if (preferred) {
+    orderedCandidates.push(preferred);
+    seen.add(preferred);
+  }
+  for (const sheet of canonicalSheets) {
+    if (!seen.has(sheet)) {
+      orderedCandidates.push(sheet);
+      seen.add(sheet);
+    }
+  }
+
+  if (orderedCandidates.length) {
+    if (preferred) {
       try {
-        const rows = await readRange(`${sheet}!A:Z`);
+        const rows = await readRange(a1RangeForSheet(preferred, 'A:Z'));
+        return { activeSheet: preferred, rows };
+      } catch {
+        // Aba do mês civil ausente ou ilegível — tenta fallbacks abaixo.
+      }
+    }
+    for (const sheet of orderedCandidates) {
+      if (sheet === preferred) continue;
+      try {
+        const rows = await readRange(a1RangeForSheet(sheet, 'A:Z'));
         if (financeSnapshotHasResidents(rows)) {
           return { activeSheet: sheet, rows };
         }
@@ -422,13 +497,28 @@ async function readActiveFinanceSheetRows() {
         // tenta próxima aba
       }
     }
-    const sheet = canonicalSheets[0];
-    const rows = await readRange(`${sheet}!A:Z`);
-    return { activeSheet: sheet, rows };
+    for (const sheet of orderedCandidates) {
+      if (sheet === preferred) continue;
+      try {
+        const rows = await readRange(a1RangeForSheet(sheet, 'A:Z'));
+        return { activeSheet: sheet, rows };
+      } catch {
+        // tenta próxima aba
+      }
+    }
+    for (const sheet of orderedCandidates) {
+      try {
+        const rows = await readRange(a1RangeForSheet(sheet, 'A:Z'));
+        return { activeSheet: sheet, rows };
+      } catch {
+        // tenta próxima aba
+      }
+    }
+    throw new Error('Nenhuma aba financeira de mês pôde ser lida (verifique nomes na planilha).');
   }
 
   const primary = resolveActiveFinanceSheetFromTitles(titleList);
-  const rows = await readRange(`${primary}!A:Z`);
+  const rows = await readRange(a1RangeForSheet(primary, 'A:Z'));
   return { activeSheet: primary, rows };
 }
 
@@ -749,6 +839,38 @@ app.get('/api', async (req, res) => {
       return res.json({ ok: true, week: effectiveWeek, feed });
     }
 
+    if (action === 'getFinancePreview') {
+      const titles = await getSpreadsheetTitles();
+      const meta = getMonthSheetResolution(titles);
+      const preferred =
+        meta.findTitle(meta.currentName) || findTitleByCivilMonth(meta.titles, meta.year, meta.month);
+      const resolvedName = resolveActiveFinanceSheetFromTitles(titles);
+      const { activeSheet, rows } = await readActiveFinanceSheetRows();
+      const snapshot = parseFinanceSnapshot(rows);
+      return res.json({
+        ok: true,
+        serverUtc: new Date().toISOString(),
+        saoPaulo: {
+          year: meta.year,
+          month: meta.month,
+          expectedTab: meta.currentName,
+        },
+        preferredTabInSpreadsheet: preferred || null,
+        resolvedWithoutReadingRows: resolvedName,
+        activeSheetUsed: activeSheet,
+        canonicalMonthTabsNewestFirst: meta.canonicalSheets,
+        financeEnvFallback: String(FINANCE_SHEET || '').trim() || null,
+        snapshotSummary: {
+          residents: snapshot.residents?.length ?? 0,
+          contas: snapshot.contas?.length ?? 0,
+          gastosColetivos: snapshot.gastosColetivos?.length ?? 0,
+          acertosIndividuais: snapshot.acertosIndividuais?.length ?? 0,
+        },
+        spreadsheetTabCount: titles.length,
+        spreadsheetTabs: titles,
+      });
+    }
+
     if (action === 'getFinanceSnapshot') {
       const { activeSheet: activeFinanceSheet, rows } = await readActiveFinanceSheetRows();
       const parsed = parseFinanceSnapshot(rows);
@@ -799,7 +921,7 @@ app.post('/api', async (req, res) => {
         const start = headerIdx >= 0 ? headerIdx + 1 : 1;
         const rowIdx = findFirstEmptyByCol(rows, 1, start, Math.min(rows.length + 80, start + 400));
         if (rowIdx < 0) return badRequest(res, 'Nao foi possivel encontrar linha vazia para conta.');
-        await updateRange(`${activeFinanceSheet}!B${rowIdx + 1}:F${rowIdx + 1}`, [
+        await updateRange(a1RangeForSheet(activeFinanceSheet, `B${rowIdx + 1}:F${rowIdx + 1}`), [
           payload.conta || payload.descricao || 'Conta',
           normalizeMoney2(payload.valor),
           payload.divisao || '',
@@ -826,7 +948,7 @@ app.post('/api', async (req, res) => {
         const totalValue = toNumberLike(payload.valor || payload.quanto || '');
         const shouldCreateIndividualSettlements = participants.length > 1 && Number.isFinite(totalValue);
 
-        await updateRange(`${activeFinanceSheet}!J${rowIdx + 1}:M${rowIdx + 1}`, [
+        await updateRange(a1RangeForSheet(activeFinanceSheet, `J${rowIdx + 1}:M${rowIdx + 1}`), [
           payer,
           normalizeMoney2(payload.valor || payload.quanto),
           payload.oQue || payload.descricao || '',
@@ -842,7 +964,7 @@ app.post('/api', async (req, res) => {
           for (const debtor of debtors) {
             const acertoRowIdx = findFirstEmptyByCol(rows, 19, acertosStart, Math.min(rows.length + 220, acertosStart + 700));
             if (acertoRowIdx < 0) break;
-            await updateRange(`${activeFinanceSheet}!T${acertoRowIdx + 1}:W${acertoRowIdx + 1}`, [
+            await updateRange(a1RangeForSheet(activeFinanceSheet, `T${acertoRowIdx + 1}:W${acertoRowIdx + 1}`), [
               debtor,
               normalizeMoney2(eachValue),
               payer,
@@ -863,7 +985,7 @@ app.post('/api', async (req, res) => {
         const start = headerIdx >= 0 ? headerIdx + 1 : 1;
         const rowIdx = findFirstEmptyByCol(rows, 19, start, Math.min(rows.length + 120, start + 500));
         if (rowIdx < 0) return badRequest(res, 'Nao foi possivel encontrar linha vazia para acerto individual.');
-        await updateRange(`${activeFinanceSheet}!T${rowIdx + 1}:W${rowIdx + 1}`, [
+        await updateRange(a1RangeForSheet(activeFinanceSheet, `T${rowIdx + 1}:W${rowIdx + 1}`), [
           payload.quem || usuario || '',
           normalizeMoney2(payload.deveQuanto || payload.valor),
           payload.paraQuem || '',
@@ -881,7 +1003,7 @@ app.post('/api', async (req, res) => {
       const activeFinanceSheet = await resolveActiveFinanceSheet();
 
       if (entryType === 'conta_fixa') {
-        await updateRange(`${activeFinanceSheet}!B${row}:F${row}`, [
+        await updateRange(a1RangeForSheet(activeFinanceSheet, `B${row}:F${row}`), [
           payload.conta || '',
           normalizeMoney2(payload.valor),
           payload.divisao || '',
@@ -891,7 +1013,7 @@ app.post('/api', async (req, res) => {
         return res.json({ ok: true, message: 'Conta fixa atualizada.' });
       }
       if (entryType === 'gasto_coletivo') {
-        await updateRange(`${activeFinanceSheet}!J${row}:M${row}`, [
+        await updateRange(a1RangeForSheet(activeFinanceSheet, `J${row}:M${row}`), [
           payload.quem || '',
           normalizeMoney2(payload.quanto || payload.valor),
           payload.oQue || '',
@@ -900,7 +1022,7 @@ app.post('/api', async (req, res) => {
         return res.json({ ok: true, message: 'Gasto coletivo atualizado.' });
       }
       if (entryType === 'acerto_individual') {
-        await updateRange(`${activeFinanceSheet}!T${row}:W${row}`, [
+        await updateRange(a1RangeForSheet(activeFinanceSheet, `T${row}:W${row}`), [
           payload.quem || '',
           normalizeMoney2(payload.deveQuanto || payload.valor),
           payload.paraQuem || '',
@@ -972,15 +1094,15 @@ app.post('/api', async (req, res) => {
       if (!resolvedRow || resolvedRow < 1) return badRequest(res, 'Nao foi possivel localizar a linha para exclusao.');
 
       if (entryType === 'conta_fixa') {
-        await updateRange(`${activeFinanceSheet}!B${resolvedRow}:F${resolvedRow}`, ['', '', '', '', '']);
+        await updateRange(a1RangeForSheet(activeFinanceSheet, `B${resolvedRow}:F${resolvedRow}`), ['', '', '', '', '']);
         return res.json({ ok: true, message: 'Conta fixa removida.' });
       }
       if (entryType === 'gasto_coletivo') {
-        await updateRange(`${activeFinanceSheet}!J${resolvedRow}:M${resolvedRow}`, ['', '', '', '']);
+        await updateRange(a1RangeForSheet(activeFinanceSheet, `J${resolvedRow}:M${resolvedRow}`), ['', '', '', '']);
         return res.json({ ok: true, message: 'Gasto coletivo removido.' });
       }
       if (entryType === 'acerto_individual') {
-        await updateRange(`${activeFinanceSheet}!T${resolvedRow}:W${resolvedRow}`, ['', '', '', '']);
+        await updateRange(a1RangeForSheet(activeFinanceSheet, `T${resolvedRow}:W${resolvedRow}`), ['', '', '', '']);
         return res.json({ ok: true, message: 'Acerto individual removido.' });
       }
       return badRequest(res, 'entryType invalido.');
@@ -993,7 +1115,7 @@ app.post('/api', async (req, res) => {
       const activeFinanceSheet = await resolveActiveFinanceSheet();
       const normalizedStatus = typeof status === 'boolean' ? (status ? 'TRUE' : 'FALSE') : String(status || '').toUpperCase();
       const next = normalizedStatus === 'TRUE' ? 'TRUE' : 'FALSE';
-      await updateRange(`${activeFinanceSheet}!F${row}:F${row}`, [next]);
+      await updateRange(a1RangeForSheet(activeFinanceSheet, `F${row}:F${row}`), [next]);
       return res.json({ ok: true, message: `Conta marcada como ${next === 'TRUE' ? 'paga' : 'pendente'}.` });
     }
     if (action === 'rateTask') {
