@@ -20,6 +20,12 @@ const {
   FINANCE_SHEET,
   /** Se definido (ex. JUN_2026), ignora o mês civil e lê sempre esta aba, desde que exista na planilha. Tire a variável ou deixe vazio para voltar ao automático. */
   FORCE_FINANCE_SHEET,
+  /**
+   * Soma ao mês civil (SP) para decidir qual aba MON_YYYY é a “referência” das finanças.
+   * 0 = aba do mês civil. 1 = um mês à frente (ex.: em abril já trabalham em MAI_2026).
+   * Intervalo recomendado -12..12.
+   */
+  FINANCE_MONTH_OFFSET,
   RATINGS_SHEET = 'AvaliacoesTarefas',
   TASK_FEED_SHEET = 'TarefasFeed',
   ADMIN_LOG_SHEET = 'AdminLogs',
@@ -367,6 +373,25 @@ function getSaoPauloYearMonth() {
   return { year: now.getUTCFullYear(), month: now.getUTCMonth() + 1 };
 }
 
+/** Mês/ano usados para escolher aba e candidatos (civil SP + FINANCE_MONTH_OFFSET). */
+function getFinanceReferenceYearMonth() {
+  const civil = getSaoPauloYearMonth();
+  let off = Number.parseInt(String(FINANCE_MONTH_OFFSET || '0').trim(), 10);
+  if (!Number.isFinite(off)) off = 0;
+  off = Math.max(-12, Math.min(12, off));
+  let m = civil.month + off;
+  let y = civil.year;
+  while (m > 12) {
+    m -= 12;
+    y += 1;
+  }
+  while (m < 1) {
+    m += 12;
+    y -= 1;
+  }
+  return { year: y, month: m, civilYear: civil.year, civilMonth: civil.month, offset: off };
+}
+
 async function getSpreadsheetTitles() {
   const sheets = await getSheetsApi();
   const res = await sheets.spreadsheets.get({
@@ -395,13 +420,14 @@ function findTitleByCivilMonth(titles, year, month) {
 }
 
 /**
- * Candidatos a aba de mês (São Paulo): **só até ao mês civil atual**, depois o mês seguinte só se não houver nenhuma aba ≤ atual.
- * Assim, em abril não entra maio na lista principal (evita dados de MAI quando ABR é o mês corrente mas a aba não casava no preferred).
+ * Candidatos a aba de mês: até ao **mês de referência** (civil em SP + FINANCE_MONTH_OFFSET), depois só mês+1 se não houver aba ≤ referência.
+ * Com offset 0, não entra o mês seguinte na lista principal (evita MAI a substituir ABR indevidamente). Com offset 1, a referência é maio em abril → MAI_2026.
  * Nomes aceites: JAN_2026, 04_2026, ABRIL_2026, etc.
  */
 function getMonthSheetResolution(titlesRaw) {
   const titles = trimSheetTitles(titlesRaw);
-  const { year, month } = getSaoPauloYearMonth();
+  const ref = getFinanceReferenceYearMonth();
+  const { year, month, civilYear, civilMonth, offset: financeMonthOffset } = ref;
   const currentName = `${MONTHS_PT[month - 1]}_${year}`;
 
   const normalizeTabKey = (t) =>
@@ -431,7 +457,17 @@ function getMonthSheetResolution(titlesRaw) {
   eligible.sort((a, b) => monthSheetOrder(b) - monthSheetOrder(a));
   const canonicalSheets = eligible.map((e) => findTitle(e.title) || e.title);
 
-  return { titles, currentName, findTitle, canonicalSheets, year, month };
+  return {
+    titles,
+    currentName,
+    findTitle,
+    canonicalSheets,
+    year,
+    month,
+    civilYear,
+    civilMonth,
+    financeMonthOffset,
+  };
 }
 
 /** Aba forçada por env (nome real na planilha, com normalização MAI-2026 → MAI_2026). */
@@ -870,10 +906,15 @@ app.get('/api', async (req, res) => {
       return res.json({
         ok: true,
         serverUtc: new Date().toISOString(),
-        saoPaulo: {
+        saoPauloCivil: {
+          year: meta.civilYear,
+          month: meta.civilMonth,
+        },
+        financeReference: {
           year: meta.year,
           month: meta.month,
           expectedTab: meta.currentName,
+          monthOffset: meta.financeMonthOffset,
         },
         preferredTabInSpreadsheet: preferred || null,
         resolvedWithoutReadingRows: resolvedName,
