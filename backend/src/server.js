@@ -18,6 +18,8 @@ const {
   TAREFA_RANGE = 'Painel da Semana!A:Z',
   /** Opcional: aba fixa (legado). Se vazio, usa só abas MON_YYYY alinhadas ao mês civil em America/Sao_Paulo (MAI_2026, JUN_2026, …). */
   FINANCE_SHEET,
+  /** Se definido (ex. JUN_2026), ignora o mês civil e lê sempre esta aba, desde que exista na planilha. Tire a variável ou deixe vazio para voltar ao automático. */
+  FORCE_FINANCE_SHEET,
   RATINGS_SHEET = 'AvaliacoesTarefas',
   TASK_FEED_SHEET = 'TarefasFeed',
   ADMIN_LOG_SHEET = 'AdminLogs',
@@ -393,7 +395,8 @@ function findTitleByCivilMonth(titles, year, month) {
 }
 
 /**
- * Candidatos a aba de mês (São Paulo): mês atual e o seguinte, ordenados do mais recente ao mais antigo.
+ * Candidatos a aba de mês (São Paulo): **só até ao mês civil atual**, depois o mês seguinte só se não houver nenhuma aba ≤ atual.
+ * Assim, em abril não entra maio na lista principal (evita dados de MAI quando ABR é o mês corrente mas a aba não casava no preferred).
  * Nomes aceites: JAN_2026, 04_2026, ABRIL_2026, etc.
  */
 function getMonthSheetResolution(titlesRaw) {
@@ -415,12 +418,11 @@ function getMonthSheetResolution(titlesRaw) {
 
   const parsed = titles.map(parseMonthSheetTitle).filter(Boolean);
   const currentOrder = year * 12 + (month - 1);
-  /** Permite o mês seguinte (lançamentos antecipados), mas não meses além disso. */
-  const maxOrderAllowed = currentOrder + 1;
 
-  let eligible = parsed.filter((p) => monthSheetOrder(p) <= maxOrderAllowed);
+  let eligible = parsed.filter((p) => monthSheetOrder(p) <= currentOrder);
   if (!eligible.length && parsed.length) {
-    eligible = parsed.filter((p) => monthSheetOrder(p) <= currentOrder);
+    const onlyNext = parsed.filter((p) => monthSheetOrder(p) === currentOrder + 1);
+    if (onlyNext.length) eligible = onlyNext;
   }
   if (!eligible.length && parsed.length) {
     eligible = parsed.slice();
@@ -432,10 +434,23 @@ function getMonthSheetResolution(titlesRaw) {
   return { titles, currentName, findTitle, canonicalSheets, year, month };
 }
 
+/** Aba forçada por env (nome real na planilha, com normalização MAI-2026 → MAI_2026). */
+function pickForcedFinanceSheetTitle(titlesRaw) {
+  const forced = String(FORCE_FINANCE_SHEET || '').trim();
+  if (!forced) return null;
+  const { findTitle, titles } = getMonthSheetResolution(titlesRaw);
+  const hit = findTitle(forced);
+  if (hit) return hit;
+  if (titles.includes(forced)) return forced;
+  return null;
+}
+
 /**
  * Aba de finanças ativa (nome): **mês civil em SP** (ex. ABR_2026) se a aba existir; senão o candidato elegível mais recente.
  */
 function resolveActiveFinanceSheetFromTitles(titlesRaw) {
+  const forced = pickForcedFinanceSheetTitle(titlesRaw);
+  if (forced) return forced;
   const { titles, currentName, findTitle, canonicalSheets, year, month } = getMonthSheetResolution(titlesRaw);
   const preferred = findTitle(currentName) || findTitleByCivilMonth(titles, year, month);
   if (preferred) return preferred;
@@ -461,6 +476,11 @@ async function resolveActiveFinanceSheet() {
  */
 async function readActiveFinanceSheetRows() {
   const titles = await getSpreadsheetTitles();
+  const forcedTitle = pickForcedFinanceSheetTitle(titles);
+  if (forcedTitle) {
+    const rows = await readRange(a1RangeForSheet(forcedTitle, 'A:Z'));
+    return { activeSheet: forcedTitle, rows };
+  }
   const { canonicalSheets, titles: titleList, currentName, findTitle, year, month } = getMonthSheetResolution(titles);
   const preferred = findTitle(currentName) || findTitleByCivilMonth(titles, year, month);
 
@@ -860,6 +880,8 @@ app.get('/api', async (req, res) => {
         activeSheetUsed: activeSheet,
         canonicalMonthTabsNewestFirst: meta.canonicalSheets,
         financeEnvFallback: String(FINANCE_SHEET || '').trim() || null,
+        forceFinanceSheetEnv: String(FORCE_FINANCE_SHEET || '').trim() || null,
+        forcedSheetResolved: pickForcedFinanceSheetTitle(titles) || null,
         snapshotSummary: {
           residents: snapshot.residents?.length ?? 0,
           contas: snapshot.contas?.length ?? 0,
