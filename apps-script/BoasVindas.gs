@@ -17,64 +17,6 @@ function enviarBoasVindasFelipe() {
 var BV_LOGO_URL = 'https://lh3.googleusercontent.com/d/1K-KUlO4ZNy5TFz1YIsVh__uxICixnkBS=w256';
 var BV_FOTO_CASA_URL = 'https://lh3.googleusercontent.com/d/1GLeZgJ8o3l5Gvp8j5_W42Ld3f-puR2aQ=w1200';
 
-/** Moradores que aparecem na seção "A galera da casa" (na ordem das cores do app). */
-var BV_MORADORES = ['ALLAN', 'RAMON', 'GUSTAVO', 'GUILHERME', 'VITOR'];
-var BV_AVATAR = [
-  { bg: '#EDE4FA', fg: '#5B21B6' },
-  { bg: '#E0F0FD', fg: '#0B4A75' },
-  { bg: '#DDF6E6', fg: '#14613A' },
-  { bg: '#FDE4E8', fg: '#9F1239' },
-  { bg: '#FCF0D6', fg: '#8A4B00' },
-];
-
-/**
- * Lê as fotos de perfil que cada um colocou no app (aba "Perfis").
- * Fotos grandes ficam divididas em pedaços na aba "TarefasFotos" (PHOTO_REF:id).
- * Retorna { NOME: Blob } só para quem tem foto.
- */
-function fotosPerfilDoApp_() {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var abaPerfis = ss.getSheetByName('Perfis');
-  if (!abaPerfis || abaPerfis.getLastRow() < 2) return {};
-  var linhas = abaPerfis.getRange(2, 1, abaPerfis.getLastRow() - 1, 2).getValues();
-
-  var refs = {};
-  linhas.forEach(function (l) {
-    var v = String(l[1] || '');
-    if (v.indexOf('PHOTO_REF:') === 0) refs[v.replace('PHOTO_REF:', '').trim()] = [];
-  });
-  var idsRef = Object.keys(refs);
-  if (idsRef.length) {
-    var abaFotos = ss.getSheetByName('TarefasFotos');
-    if (abaFotos && abaFotos.getLastRow() > 0) {
-      var colA = abaFotos.getRange(1, 1, abaFotos.getLastRow(), 1).getValues();
-      for (var r = 0; r < colA.length; r++) {
-        var id = String(colA[r][0] || '').trim();
-        if (!refs[id]) continue;
-        var row = abaFotos.getRange(r + 1, 1, 1, 4).getValues()[0];
-        refs[id].push({ idx: Number(row[1] || 0), chunk: String(row[3] || '') });
-      }
-    }
-  }
-
-  var fotos = {};
-  linhas.forEach(function (l) {
-    var nome = String(l[0] || '').trim().toUpperCase();
-    var dado = String(l[1] || '').trim();
-    if (!nome || !dado) return;
-    if (dado.indexOf('PHOTO_REF:') === 0) {
-      var partes = refs[dado.replace('PHOTO_REF:', '').trim()] || [];
-      dado = partes.sort(function (x, y) { return x.idx - y.idx; }).map(function (p) { return p.chunk; }).join('');
-    }
-    var m = dado.match(/^data:(image\/[a-z+]+);base64,(.+)$/i);
-    if (!m) return;
-    try {
-      fotos[nome] = Utilities.newBlob(Utilities.base64Decode(m[2]), m[1], 'perfil-' + nome.toLowerCase() + '.jpg');
-    } catch (e) {}
-  });
-  return fotos;
-}
-
 /** Cores do app (mesmos tokens do tema claro). */
 var BV_COR = {
   bg: '#F6F4FA',
@@ -231,48 +173,12 @@ function enviarBoasVindas_(nomeBusca, opcoes) {
     '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:separate;border-radius:26px;' +
     'background-color:' + C.surface + ';border:1px solid ' + C.border + ';overflow:hidden;">' +
     '<tr><td style="padding:0;line-height:0;font-size:0;">' +
-    '<img src="' + BV_FOTO_CASA_URL + '" alt="Foto da Tocah" width="600" ' +
+    '<img src="' + BV_FOTO_CASA_URL + '" alt="A galera da Tocah" width="600" ' +
     'style="display:block;width:100%;max-width:600px;height:auto;border-radius:26px 26px 0 0;" /></td></tr>' +
     '<tr><td style="padding:12px 18px 14px;font-family:' + fs + ';">' +
-    '<div style="font-size:15px;font-weight:900;color:' + C.text + ';">Sua nova casa 🏡</div>' +
-    '<div style="margin-top:2px;font-size:13px;font-weight:600;color:' + C.textMuted + ';">República Tocah do Coelho</div>' +
+    '<div style="font-size:15px;font-weight:900;color:' + C.text + ';">A galera da Tocah 💜</div>' +
+    '<div style="margin-top:2px;font-size:13px;font-weight:600;color:' + C.textMuted + ';">A mesma foto do início do app. Agora com você!</div>' +
     '</td></tr></table></td></tr>';
-
-  // ===== A galera da casa (fotos de perfil do app) =====
-  var fotosPerfil = {};
-  try { fotosPerfil = fotosPerfilDoApp_(); } catch (e) { fotosPerfil = {}; }
-  imgs.inlineImages = imgs.inlineImages || {};
-
-  function avatarMorador_(nome, idx) {
-    var cor = BV_AVATAR[idx % BV_AVATAR.length];
-    var foto = fotosPerfil[nome];
-    var circulo;
-    if (foto) {
-      var cid = 'perfil' + nome.toLowerCase();
-      imgs.inlineImages[cid] = foto;
-      circulo = '<img src="cid:' + cid + '" alt="' + nome + '" width="64" height="64" ' +
-        'style="display:block;margin:0 auto;width:64px;height:64px;border-radius:50%;border:3px solid ' + cor.bg + ';object-fit:cover;" />';
-    } else {
-      circulo = '<div style="margin:0 auto;width:64px;height:64px;line-height:64px;border-radius:50%;text-align:center;background-color:' + cor.bg +
-        ';color:' + cor.fg + ';font-family:' + fs + ';font-size:26px;font-weight:900;">' + nome.charAt(0) + '</div>';
-    }
-    return '<td width="33%" align="center" valign="top" style="width:33%;padding:8px 4px 12px;font-family:' + fs + ';">' + circulo +
-      '<div style="margin-top:8px;font-size:13px;font-weight:800;color:' + C.text + ';">' + nome.charAt(0) + nome.slice(1).toLowerCase() + '</div></td>';
-  }
-
-  var celulas = BV_MORADORES.map(function (n, i) { return avatarMorador_(n, i); });
-  var gradeGalera = '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">';
-  for (var gi = 0; gi < celulas.length; gi += 3) {
-    var linha = celulas.slice(gi, gi + 3);
-    while (linha.length < 3) linha.push('<td width="33%" style="width:33%;"></td>');
-    gradeGalera += '<tr>' + linha.join('') + '</tr>';
-  }
-  gradeGalera += '</table>';
-
-  var galera = secao_('Moradores', 'A galera da casa',
-    '<div style="margin:-6px 0 6px;font-family:' + fs + ';font-size:14px;font-weight:600;line-height:1.55;color:' + C.textMuted + ';">' +
-    'Quem você vai encontrar na Tocah. No app, cada um aparece com essa foto. Coloque a sua também: toque no seu nome no topo do app.</div>' +
-    gradeGalera);
 
   var datas = secao_('Calendário', 'Datas para guardar',
     '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">' +
@@ -386,7 +292,7 @@ function enviarBoasVindas_(nomeBusca, opcoes) {
     '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:' + C.bg + ';border-collapse:collapse;">' +
     '<tr><td align="center" style="padding:24px 12px 32px;">' +
     '<table role="presentation" width="600" cellpadding="0" cellspacing="0" style="width:100%;max-width:600px;border-collapse:collapse;">' +
-    bannerTeste + hero + galera + datas + diaADia + app + convivencia + estatuto + pix + fechamento +
+    bannerTeste + hero + datas + diaADia + app + convivencia + estatuto + pix + fechamento +
     '</table></td></tr></table></body></html>';
 
   try {
