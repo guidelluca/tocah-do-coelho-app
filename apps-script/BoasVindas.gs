@@ -8,9 +8,12 @@ function enviarBoasVindasFelipeTESTE() {
   enviarBoasVindas_('FELIPE', { teste: true, genero: 'o' });
 }
 
-/** PRODUÇÃO: envia de fato para o Felipe. */
+/** PRODUÇÃO: envia de fato para o Felipe.
+ *  Se ele ainda não estiver em MORADORES_CONFIG, coloque o e-mail dele aqui embaixo. */
+var EMAIL_FELIPE = ''; // ex.: 'felipe@gmail.com'
+
 function enviarBoasVindasFelipe() {
-  enviarBoasVindas_('FELIPE', { teste: false, genero: 'o' });
+  enviarBoasVindas_('FELIPE', { teste: false, genero: 'o', email: EMAIL_FELIPE });
 }
 
 /** Imagens do app (mesmos arquivos do Drive que o app usa). */
@@ -44,10 +47,15 @@ var BV_COR = {
 function enviarBoasVindas_(nomeBusca, opcoes) {
   opcoes = opcoes || {};
   var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var morador = getMoradorPorNome_(nomeBusca);
+  var morador = null;
+  try { morador = getMoradorPorNome_(nomeBusca); } catch (e) { morador = null; }
+  // Morador novo ainda fora do MORADORES_CONFIG: usa o nome e o e-mail informados.
+  if (!morador && (opcoes.teste === true || opcoes.email)) {
+    morador = { nome: nomeBusca, email: opcoes.email || '(e-mail ainda não cadastrado)' };
+  }
   if (!morador) {
     ss.toast(
-      nomeBusca + ' não encontrado(a) em MORADORES_CONFIG.',
+      nomeBusca + ' não está em MORADORES_CONFIG. Coloque o e-mail em EMAIL_' + nomeBusca + ' no script.',
       CONFIG.branding.menuUsuario, 6
     );
     return;
