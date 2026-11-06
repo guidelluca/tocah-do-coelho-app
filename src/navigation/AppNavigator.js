@@ -5,46 +5,43 @@ import { HomeScreen } from '../screens/HomeScreen';
 import { TasksScreen } from '../screens/TasksScreen';
 import { FeedScreen } from '../screens/FeedScreen';
 import { NildeScreen } from '../screens/NildeScreen';
-import { useThemeMode } from '../context/ThemeContext';
-import { darkTheme, lightTheme } from '../constants/theme';
+import { useTheme } from '../theme/ThemeContext';
 import { useNotifications } from '../context/NotificationContext';
 
 const Tab = createBottomTabNavigator();
 
+// Nomes das rotas ficam iguais (links/atalhos antigos); só o rótulo ganha acento.
+const TABS = {
+  Inicio: { label: 'Início', icon: 'home-variant-outline', iconActive: 'home-variant' },
+  Financas: { label: 'Finanças', icon: 'cash-multiple', iconActive: 'cash-multiple' },
+  Tarefas: { label: 'Tarefas', icon: 'clipboard-check-outline', iconActive: 'clipboard-check' },
+  Nilde: { label: 'Nilde', icon: 'rabbit', iconActive: 'rabbit' },
+  Feed: { label: 'Feed', icon: 'message-text-outline', iconActive: 'message-text' },
+};
+
 export function AppNavigator() {
-  const { isDark } = useThemeMode();
+  const { colors, typography, layout, shadow } = useTheme();
   const { notificationCount } = useNotifications();
-  const colors = isDark ? darkTheme : lightTheme;
   return (
     <Tab.Navigator
       screenOptions={({ route }) => ({
         headerShown: false,
-        sceneStyle: { backgroundColor: colors.background },
+        title: TABS[route.name].label,
+        tabBarLabel: TABS[route.name].label,
+        sceneStyle: { backgroundColor: colors.bg },
         tabBarStyle: {
           backgroundColor: colors.surface,
-          borderTopColor: 'transparent',
-          borderTopWidth: 0,
-          height: 82,
-          paddingBottom: 10,
-          paddingTop: 10,
-          marginHorizontal: 12,
-          marginBottom: 4,
-          borderRadius: 20,
-          shadowColor: isDark ? '#000' : '#4b3b83',
-          shadowOpacity: isDark ? 0.3 : 0.15,
-          shadowRadius: 14,
-          shadowOffset: { width: 0, height: 6 },
-          elevation: 9,
+          borderTopColor: colors.border,
+          borderTopWidth: 1,
+          height: layout.tabBarHeight + 8,
+          paddingTop: 6,
+          paddingBottom: 8,
+          ...shadow(2),
         },
         tabBarActiveTintColor: colors.primary,
-        tabBarInactiveTintColor: colors.muted,
-        tabBarLabelStyle: { fontWeight: '800', fontSize: 11 },
-        tabBarItemStyle: { borderRadius: 12 },
-        tabBarActiveBackgroundColor: isDark ? colors.secondary : '#f3efff',
-        tabBarIcon: ({ color, size }) => {
-          const map = { Inicio: 'home-outline', Financas: 'cash-multiple', Tarefas: 'clipboard-list-outline', Nilde: 'rabbit', Feed: 'message-text-outline' };
-          return <MaterialCommunityIcons name={map[route.name]} size={size} color={color} />;
-        },
+        tabBarInactiveTintColor: colors.textMuted,
+        tabBarLabelStyle: { ...typography.overline, textTransform: 'none', letterSpacing: 0, fontSize: 11 },
+        tabBarIcon: ({ color, focused }) => <MaterialCommunityIcons name={focused ? TABS[route.name].iconActive : TABS[route.name].icon} size={24} color={color} />,
       })}
     >
       <Tab.Screen name="Inicio" component={HomeScreen} />
@@ -56,7 +53,7 @@ export function AppNavigator() {
         component={FeedScreen}
         options={{
           tabBarBadge: notificationCount > 0 ? (notificationCount > 99 ? '99+' : notificationCount) : undefined,
-          tabBarBadgeStyle: { backgroundColor: '#ef4444', color: '#fff', fontSize: 10, fontWeight: '800' },
+          tabBarBadgeStyle: { backgroundColor: colors.danger, color: colors.onDanger, fontSize: 10, fontWeight: '700' },
         }}
       />
     </Tab.Navigator>

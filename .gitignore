@@ -13,3 +13,4 @@ backend/.env
 .web-preview/
 backend/data/
 portfolio-mockups/
+dist/

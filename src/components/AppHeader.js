@@ -1,157 +1,70 @@
 import { useState } from 'react';
-import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useThemeMode } from '../context/ThemeContext';
+import { useTheme } from '../theme/ThemeContext';
+import { useResident } from '../context/ResidentContext';
+import { useNotifications } from '../context/NotificationContext';
+import { AppText, Avatar, IconButton, PressableScale } from './ui';
+import { RemoteImage, LOGO_SOURCES } from './RemoteImage';
+import { NotificationsSheet } from './NotificationsSheet';
+import { ResidentSheet } from './ResidentSheet';
 
-const TOCAH_LOGO_SOURCES = [
-  { uri: 'https://drive.google.com/uc?export=download&id=1K-KUlO4ZNy5TFz1YIsVh__uxICixnkBS' },
-  { uri: 'https://drive.google.com/uc?export=view&id=1K-KUlO4ZNy5TFz1YIsVh__uxICixnkBS' },
-  { uri: 'https://drive.google.com/thumbnail?id=1K-KUlO4ZNy5TFz1YIsVh__uxICixnkBS&sz=w512' },
-  require('../../assets/icon.png'),
-];
+const LOCAL_LOGO = require('../../assets/icon.png');
 
-export function AppHeader({ title = 'República Tocah', subtitle = '', onBellPress, notificationCount = 0 }) {
+/** Cabeçalho único de todas as abas: logo, título, tema, sino (funciona em todas) e avatar do morador. */
+export function AppHeader({ title = 'Tocah', subtitle = '' }) {
   const insets = useSafeAreaInsets();
-  const { isDark, toggleTheme } = useThemeMode();
-  const [logoSourceIdx, setLogoSourceIdx] = useState(0);
-  const contextLine = subtitle || title;
-  const gradient = isDark ? ['#3b1f55', '#241033'] : ['#6a1b9a', '#4a148c'];
+  const { colors, isDark, toggleTheme, spacing, radius, shadow } = useTheme();
+  const { resident } = useResident();
+  const { notificationCount, markNotificationsAsSeen } = useNotifications();
+  const [bellOpen, setBellOpen] = useState(false);
+  const [meOpen, setMeOpen] = useState(false);
+
   return (
-    <LinearGradient
-      colors={gradient}
-      start={{ x: 0, y: 0 }}
-      end={{ x: 1, y: 1 }}
-      style={[styles.wrap, { paddingTop: Math.max(10, insets.top * 0.4), marginTop: 0 }]}
-    >
-      <View style={styles.glowOrbTop} />
-      <View style={styles.glowOrbBottom} />
-      <View style={styles.left}>
-        <View style={styles.logoOuterRing}>
-          {logoSourceIdx < TOCAH_LOGO_SOURCES.length ? (
-            <Image
-              source={TOCAH_LOGO_SOURCES[logoSourceIdx]}
-              style={styles.logo}
-              resizeMode="contain"
-              onError={() => setLogoSourceIdx((prev) => prev + 1)}
-            />
-          ) : (
-            <View style={styles.logoFallback}>
-              <MaterialCommunityIcons name="rabbit-variant" size={20} color="#6a1b9a" />
-            </View>
-          )}
+    <>
+      <LinearGradient
+        colors={[colors.headerStart, colors.headerEnd]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={[styles.wrap, shadow(2), { paddingTop: insets.top + spacing.sm, paddingHorizontal: spacing.lg, paddingBottom: spacing.md, borderBottomLeftRadius: radius.xl, borderBottomRightRadius: radius.xl }]}
+      >
+        <View style={[styles.orb, { backgroundColor: colors.onHeaderSurface }]} />
+        <View style={styles.left}>
+          <RemoteImage sources={LOGO_SOURCES} fallback={LOCAL_LOGO} style={[styles.logo, { borderColor: colors.onHeaderBorder }]} resizeMode="cover" accessibilityLabel="Logo da República Tocah do Coelho" />
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <AppText variant="heading" color="onHeader" numberOfLines={1}>{title}</AppText>
+            {!!subtitle && <AppText variant="caption" color="onHeaderMuted" numberOfLines={1}>{subtitle}</AppText>}
+          </View>
         </View>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.overline}>Painel da Casa</Text>
-          <Text style={styles.houseTitle} numberOfLines={2}>República Tocah do Coelho</Text>
-          {!!contextLine && <Text style={styles.contextText} numberOfLines={1}>{contextLine}</Text>}
+        <View style={styles.right}>
+          <IconButton icon={isDark ? 'white-balance-sunny' : 'moon-waning-crescent'} variant="header" onPress={toggleTheme} accessibilityLabel={isDark ? 'Usar tema claro' : 'Usar tema escuro'} iconSize={20} />
+          <IconButton
+            icon="bell-outline"
+            variant="header"
+            badge={notificationCount}
+            accessibilityLabel={notificationCount ? `Notificações, ${notificationCount} novas` : 'Notificações'}
+            onPress={() => {
+              setBellOpen(true);
+              markNotificationsAsSeen();
+            }}
+          />
+          <PressableScale onPress={() => setMeOpen(true)} accessibilityLabel={`Você é ${resident}. Trocar morador`} scaleTo={0.92} style={styles.me}>
+            <Avatar name={resident} size={40} ring="onHeader" />
+          </PressableScale>
         </View>
-      </View>
-      <View style={styles.rightActions}>
-        <Pressable style={styles.themeBtn} onPress={toggleTheme}>
-          <MaterialCommunityIcons name={isDark ? 'white-balance-sunny' : 'moon-waning-crescent'} size={17} color="#fff" />
-        </Pressable>
-        <Pressable style={styles.bell} onPress={onBellPress}>
-          <MaterialCommunityIcons name="bell-outline" size={20} color="#fff" />
-          {notificationCount > 0 && (
-            <View style={styles.badge}>
-              <Text style={styles.badgeText}>{notificationCount > 99 ? '99+' : String(notificationCount)}</Text>
-            </View>
-          )}
-        </Pressable>
-      </View>
-    </LinearGradient>
+      </LinearGradient>
+      <NotificationsSheet visible={bellOpen} onClose={() => setBellOpen(false)} />
+      <ResidentSheet visible={meOpen} onClose={() => setMeOpen(false)} />
+    </>
   );
 }
 
 const styles = StyleSheet.create({
-  wrap: {
-    marginHorizontal: 14,
-    marginTop: 10,
-    marginBottom: 10,
-    borderRadius: 26,
-    paddingHorizontal: 16,
-    paddingBottom: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    overflow: 'hidden',
-    shadowColor: '#3f2d87',
-    shadowOpacity: 0.28,
-    shadowRadius: 14,
-    shadowOffset: { width: 0, height: 7 },
-    elevation: 9,
-  },
-  glowOrbTop: {
-    position: 'absolute',
-    top: -34,
-    right: -16,
-    width: 120,
-    height: 120,
-    borderRadius: 60,
-    backgroundColor: 'rgba(255,255,255,0.14)',
-  },
-  glowOrbBottom: {
-    position: 'absolute',
-    bottom: -50,
-    left: -34,
-    width: 140,
-    height: 140,
-    borderRadius: 70,
-    backgroundColor: 'rgba(255,255,255,0.08)',
-  },
-  left: { flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1, paddingRight: 10 },
-  logoOuterRing: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    padding: 2,
-    backgroundColor: 'rgba(255,255,255,0.35)',
-  },
-  logo: { width: '100%', height: '100%', borderRadius: 26 },
-  logoFallback: { width: '100%', height: '100%', alignItems: 'center', justifyContent: 'center', backgroundColor: '#f3e8ff', borderRadius: 26 },
-  houseTitle: { color: '#fff', fontSize: 18, lineHeight: 20, fontWeight: '900', letterSpacing: 0.15 },
-  overline: { color: 'rgba(255,255,255,0.82)', fontSize: 10, fontWeight: '800', letterSpacing: 0.7, textTransform: 'uppercase' },
-  contextText: { color: 'rgba(255,255,255,0.93)', fontSize: 12, marginTop: 2, fontWeight: '700' },
-  rightActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  themeBtn: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.3)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.12)',
-  },
-  bell: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.3)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.12)',
-  },
-  badge: {
-    position: 'absolute',
-    right: -6,
-    top: -6,
-    minWidth: 18,
-    height: 18,
-    borderRadius: 9,
-    paddingHorizontal: 4,
-    backgroundColor: '#ef4444',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#fff',
-  },
-  badgeText: {
-    color: '#fff',
-    fontSize: 9,
-    fontWeight: '900',
-  },
+  wrap: { flexDirection: 'row', alignItems: 'center', overflow: 'hidden', gap: 8 },
+  orb: { position: 'absolute', width: 160, height: 160, borderRadius: 80, top: -70, right: 40 },
+  left: { flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1, minWidth: 0 },
+  logo: { width: 40, height: 40, borderRadius: 20, borderWidth: 2 },
+  right: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  me: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
 });

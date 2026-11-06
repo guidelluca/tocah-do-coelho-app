@@ -1,16 +1,16 @@
 {
   "expo": {
-    "name": "tocah-do-coelho-app",
+    "name": "Tocah",
     "slug": "tocah-do-coelho-app",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+      "backgroundColor": "#6A1B9A"
     },
     "ios": {
       "supportsTablet": true
@@ -18,7 +18,7 @@
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
+        "backgroundColor": "#6A1B9A"
       },
       "edgeToEdgeEnabled": true
     },
@@ -29,9 +29,9 @@
       "shortName": "Tocah",
       "display": "standalone",
       "themeColor": "#6a1b9a",
-      "backgroundColor": "#ffffff",
+      "backgroundColor": "#F6F4FA",
       "lang": "pt-BR",
-      "description": "App da República Tocah para tarefas, finanças e feed."
+      "description": "App da República Tocah do Coelho: finanças, tarefas, Nilde e feed da casa."
     }
   }
 }

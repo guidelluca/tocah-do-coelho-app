@@ -1,305 +1,193 @@
-import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, Image, Modal, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
-import * as ImagePicker from 'expo-image-picker';
-import { concluirTarefa, getApiConnectionStatus, getEscalaSemana, getTaskRatings, rateTask, subscribeApiConnectionStatus } from '../services/api';
-import { useThemeMode } from '../context/ThemeContext';
-import { darkTheme, lightTheme } from '../constants/theme';
-import { AppHeader } from '../components/AppHeader';
-import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { useFocusEffect } from '@react-navigation/native';
+import { useState } from 'react';
+import { StyleSheet, View } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
+import { Screen } from '../components/Screen';
+import { MyTaskCard } from '../components/MyTaskCard';
+import { FeedPhoto } from '../components/FeedPhoto';
+import { AppText, Avatar, BottomSheet, Button, Card, Divider, EmptyState, Icon, ListRow, PressableScale, ProgressBar, Segmented, SkeletonCard, StatusPill, TextField, useFeedback } from '../components/ui';
 import { useResident } from '../context/ResidentContext';
-const IMAGE_MEDIA_TYPES = ImagePicker.MediaType?.Images || 'images';
-const getAvatarInitial = (value) => {
-  const cleaned = String(value ?? '').trim();
-  if (!cleaned) return '•';
-  return cleaned.slice(0, 1).toUpperCase();
-};
+import { useTheme } from '../theme/ThemeContext';
+import { useEscala, useNilde, useRatings } from '../data/hooks';
+import { invalidateResources } from '../data/store';
+import { rateTask } from '../services/api';
+import { useSyncInfo } from '../data/store';
+import { formatWeekdayTime, weekRangeLabel } from '../utils/date';
+import { displayName, norm, sameName } from '../utils/text';
 
-export function TasksScreen() {
-  const { isDark } = useThemeMode();
-  const { resident, getResidentPhoto } = useResident();
-  const colors = isDark ? darkTheme : lightTheme;
-  const [escala, setEscala] = useState([]);
-  const [checked, setChecked] = useState({});
-  const [refreshing, setRefreshing] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [ratings, setRatings] = useState({});
-  const [rateModalVisible, setRateModalVisible] = useState(false);
-  const [selectedTask, setSelectedTask] = useState(null);
+const isBanheirao = (task) => norm(task).includes('BANHEIR');
+const EXPECTED = 4;
+
+function Stars({ value, onChange, size = 36 }) {
+  const { spacing } = useTheme();
+  return (
+    <View style={[styles.row, { gap: spacing.xs, justifyContent: 'center' }]} accessibilityRole="adjustable" accessibilityLabel={`Nota ${value} de 5`}>
+      {[1, 2, 3, 4, 5].map((n) => (
+        <PressableScale key={n} onPress={() => onChange(n)} accessibilityLabel={`${n} estrela${n > 1 ? 's' : ''}`} scaleTo={0.85} style={styles.star}>
+          <Icon name={n <= value ? 'star' : 'star-outline'} size={size} color={n <= value ? 'star' : 'textSubtle'} />
+        </PressableScale>
+      ))}
+    </View>
+  );
+}
+
+function RatingSheet({ target, onClose }) {
+  const { resident } = useResident();
+  const { spacing } = useTheme();
+  const { toast, toastError } = useFeedback();
   const [nota, setNota] = useState(5);
+  const [categoria, setCategoria] = useState('casa');
   const [comentario, setComentario] = useState('');
-  const [categoriaNota, setCategoriaNota] = useState('casa');
-  const [ratingSaving, setRatingSaving] = useState(false);
-  const [apiStatus, setApiStatus] = useState(() => getApiConnectionStatus());
-  const completedCount = Object.values(checked).filter(Boolean).length;
-  const hasBanheirao = (taskName) => String(taskName || '').toLowerCase().includes('banheir');
-  const takeTaskProofPhoto = async () => {
-    const permission = await ImagePicker.requestCameraPermissionsAsync();
-    if (!permission.granted) {
-      Alert.alert('Permissão necessária', 'Permita o uso da câmera para comprovar a tarefa.');
-      return '';
+  const [saving, setSaving] = useState(false);
+  const banheirao = target && isBanheirao(target.tarefa);
+  const already = target?.rated || {};
+
+  const submit = async () => {
+    setSaving(true);
+    try {
+      await rateTask({ actor: resident, target: target.nome, tarefa: target.tarefa, nota, comentario: comentario.trim(), categoria });
+      toast(`Nota enviada para ${displayName(target.nome)}. Ninguém fica sabendo que foi você.`, 'success');
+      setComentario('');
+      setNota(5);
+      onClose();
+    } catch (e) {
+      toastError(e, 'Não deu para enviar a nota.');
+    } finally {
+      setSaving(false);
+      invalidateResources('ratings', 'feed');
     }
-    const result = await ImagePicker.launchCameraAsync({
-      quality: 0.25,
-      allowsEditing: true,
-      base64: true,
-      mediaTypes: IMAGE_MEDIA_TYPES,
-    });
-    if (result.canceled || !result.assets?.[0]?.base64) return '';
-    return `data:image/jpeg;base64,${result.assets[0].base64}`;
   };
 
-  const load = useCallback(async (mode = 'normal') => {
-    if (mode === 'pull') setRefreshing(true);
-    else if (mode === 'normal') setLoading(true);
-    try {
-      const [escalaRes, ratingsRes] = await Promise.allSettled([
-        getEscalaSemana(),
-        getTaskRatings(),
-      ]);
-
-      if (escalaRes.status === 'fulfilled') {
-        setEscala(Array.isArray(escalaRes.value) ? escalaRes.value : []);
-      } else {
-        setEscala([]);
-      }
-
-      setRatings(ratingsRes.status === 'fulfilled' ? (ratingsRes.value?.ratings || {}) : {});
-
-      const hardFail = escalaRes.status === 'rejected';
-      const partialFail = ratingsRes.status === 'rejected';
-      setError(hardFail ? 'Nao foi possivel carregar tarefas.' : partialFail ? 'Parte social indisponivel no momento.' : '');
-    } catch (e) {
-      setError(e?.message || 'Nao foi possivel carregar tarefas.');
-    } finally {
-      if (mode === 'normal') setLoading(false);
-      if (mode === 'pull') setRefreshing(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, []);
-
-  useEffect(() => {
-    const unsubscribe = subscribeApiConnectionStatus((next) => setApiStatus(next));
-    return unsubscribe;
-  }, []);
-
-  useFocusEffect(
-    useCallback(() => {
-      load('silent');
-      const timer = setInterval(() => {
-        load('silent');
-      }, 20000);
-      return () => clearInterval(timer);
-    }, [load])
+  return (
+    <BottomSheet
+      visible={!!target}
+      onClose={onClose}
+      title={target ? `Avaliar ${displayName(target.nome)}` : ''}
+      subtitle={target?.tarefa}
+      footer={<Button label="Enviar nota" icon="send" onPress={submit} loading={saving} disabled={!!already[categoria]} style={{ flex: 1 }} />}
+    >
+      {banheirao && (
+        <Segmented
+          value={categoria}
+          onChange={setCategoria}
+          options={[{ value: 'casa', label: already.casa ? 'Casa ✓' : 'Casa' }, { value: 'banheirao', label: already.banheirao ? 'Banheirão ✓' : 'Banheirão' }]}
+          style={{ marginBottom: spacing.lg }}
+        />
+      )}
+      {already[categoria] ? (
+        <EmptyState icon="check-decagram" title="Você já avaliou esta semana" message="Uma nota por categoria por semana." compact />
+      ) : (
+        <>
+          <Stars value={nota} onChange={setNota} />
+          <AppText variant="caption" color="textMuted" center style={{ marginVertical: spacing.sm }}>{['', 'Ficou devendo', 'Dá pra melhorar', 'Ok', 'Bem feito', 'Impecável'][nota]}</AppText>
+          <TextField label="Comentário (opcional)" value={comentario} onChangeText={setComentario} multiline placeholder="Só o morador avaliado entende o recado 😉" />
+          <View style={[styles.row, { gap: spacing.sm }]}>
+            <Icon name="incognito" size={18} color="textMuted" />
+            <AppText variant="caption" color="textMuted" style={{ flex: 1 }}>A avaliação é anônima no app: aparece como “Avaliador anônimo”.</AppText>
+          </View>
+        </>
+      )}
+    </BottomSheet>
   );
+}
+
+export function TasksScreen() {
+  const navigation = useNavigation();
+  const { colors, spacing, radius } = useTheme();
+  const { resident } = useResident();
+  const escala = useEscala();
+  const ratings = useRatings(resident);
+  const nilde = useNilde();
+  const { serverWeek } = useSyncInfo();
+  const [rateTarget, setRateTarget] = useState(null);
+  const [photoTs, setPhotoTs] = useState('');
+
+  const list = Array.isArray(escala.data) ? escala.data : [];
+  const done = list.filter((x) => x.concluida).length;
+  const week = ratings.data?.currentWeek || serverWeek;
+  const summary = ratings.data?.ratings || {};
+  const ratedByMe = ratings.data?.ratedByMe || {};
+  const nildeToday = nilde.data ? Object.keys(nilde.data.log?.[nilde.data.today] || {}).length : null;
+
+  const refresh = () => {
+    invalidateResources('feed', 'ratings', 'escala');
+    return escala.refresh();
+  };
 
   return (
-    <ScrollView
-      style={[styles.container, { backgroundColor: colors.background }]}
-      contentContainerStyle={styles.content}
-      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => load('pull')} tintColor={colors.primary} />}
-    >
-      <AppHeader title="Tarefas" subtitle={`Feed semanal • ${resident}`} />
-      <View style={[styles.card, { backgroundColor: '#fff8e1', borderColor: '#ffe0b2', borderLeftWidth: 5, borderLeftColor: '#ff9800' }]}>
-        <Text style={[styles.title, { color: '#e65100' }]}>Mascote Nilde (Diário)</Text>
-        <Text style={[styles.text, { color: '#5f4339' }]}>Feno à vontade, água fresca e check diário de alimentação.</Text>
-      </View>
-      <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+    <Screen title="Tarefas" subtitle={week ? `Semana de ${weekRangeLabel(week)}` : 'Escala da semana'} onRefresh={refresh}>
+      <MyTaskCard />
+
+      <Card style={{ marginBottom: spacing.md }}>
         <View style={styles.rowBetween}>
-          <Text style={[styles.title, { color: colors.text }]}>Tarefas da Semana</Text>
-          <View style={[styles.progressPill, { backgroundColor: isDark ? '#1b4332' : '#e8f5e9' }]}>
-            <Text style={[styles.progressText, { color: '#2e7d32' }]}>{completedCount} feitas</Text>
-          </View>
+          <AppText variant="heading">A casa nesta semana</AppText>
+          <AppText variant="bodyStrong" color="primary" tabular>{done}/{list.length || 5}</AppText>
         </View>
-        {loading ? (
-          <View style={styles.loadingWrap}>
-            <ActivityIndicator color={colors.primary} />
-          </View>
-        ) : null}
-        {!!error && !loading && <Text style={[styles.error, { color: '#ef4444' }]}>{error}</Text>}
-        {!apiStatus?.online && !!apiStatus?.message && !loading && <Text style={[styles.error, { color: '#b45309' }]}>{apiStatus.message}</Text>}
-        {!apiStatus?.online && !!apiStatus?.cachedAt && !loading && (
-          <Text style={[styles.error, { color: '#b45309' }]}>Ultima consulta salva: {new Date(apiStatus.cachedAt).toLocaleString('pt-BR')}</Text>
-        )}
-        {!loading && escala.map((item, idx) => {
-          const done = !!checked[idx];
-          const stat = ratings[item.nome] || {};
-          const casaStat = stat?.casa || { media: 0, total: 0 };
-          const banheiraoStat = stat?.banheirao || { media: 0, total: 0 };
+        <ProgressBar value={list.length ? done / list.length : 0} tone="success" style={{ marginTop: spacing.sm, marginBottom: spacing.sm }} />
+        {escala.loading && <SkeletonCard lines={3} />}
+        {!escala.loading && !list.length && <EmptyState icon="calendar-blank-outline" title="Escala vazia" message="Preencha a aba “Painel da Semana” da planilha." compact />}
+        {list.map((item, i) => {
+          const me = sameName(item.nome, resident);
+          const stat = summary[item.nome] || summary[norm(item.nome)] || {};
+          const casa = stat.casa || { total: 0, media: 0 };
+          const ban = stat.banheirao || { total: 0, media: 0 };
+          const rated = ratedByMe[item.nome] || {};
+          const needs = isBanheirao(item.tarefa) ? !(rated.casa && rated.banheirao) : !rated.casa;
           return (
-            <View key={`${item.nome}-${idx}`} style={[styles.item, { backgroundColor: isDark ? '#1f2430' : '#fafafa' }, done && styles.itemDone]}>
-              {getResidentPhoto(item.nome) ? (
-                <Image source={{ uri: getResidentPhoto(item.nome) }} style={[styles.avatarPhoto, done && styles.avatarDone]} />
-              ) : (
-                <View style={[styles.avatar, done && styles.avatarDone]}>
-                  <Text style={styles.avatarText}>{getAvatarInitial(item.nome)}</Text>
-                </View>
-              )}
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.itemName, { color: colors.text }]}>{item.nome}</Text>
-                <Text style={[styles.itemTask, { color: colors.muted }]}>{item.tarefa}</Text>
-                <Text style={[styles.ratingText, { color: colors.muted }]}>
-                  Nota casa: {casaStat.total ? `${casaStat.media.toFixed(1)} (${casaStat.total}/4)` : 'sem avaliacoes'}
-                </Text>
-                {hasBanheirao(item.tarefa) && (
-                  <Text style={[styles.ratingText, { color: '#7e57c2' }]}>
-                    Nota banheirao: {banheiraoStat.total ? `${banheiraoStat.media.toFixed(1)} (${banheiraoStat.total}/4)` : 'sem avaliacoes'}
-                  </Text>
-                )}
-              </View>
-              <Pressable
-                style={[styles.check, done && { backgroundColor: '#00c853', borderColor: '#00c853' }]}
-                onPress={async () => {
-                  if (done) {
-                    setChecked((prev) => ({ ...prev, [idx]: false }));
-                    return;
-                  }
-                  const photoDataUrl = await takeTaskProofPhoto();
-                  if (!photoDataUrl) {
-                    Alert.alert('Comprovacao obrigatoria', 'Para concluir a tarefa, envie uma foto da tarefa feita.');
-                    return;
-                  }
-                  try {
-                    await concluirTarefa(item.tarefa, resident, photoDataUrl);
-                    setChecked((prev) => ({ ...prev, [idx]: true }));
-                    await load('pull');
-                  } catch (e) {
-                    Alert.alert('Erro', e?.message || 'Nao foi possivel concluir a tarefa.');
-                  }
-                }}
-              >
-                <MaterialCommunityIcons name={done ? 'check' : 'checkbox-blank-outline'} size={17} color={done ? '#fff' : '#6b7280'} />
-              </Pressable>
-              <Pressable
-                style={styles.rateBtn}
-                onPress={() => {
-                  if (String(item.nome).toUpperCase() === String(resident).toUpperCase()) {
-                    Alert.alert('Aviso', 'Voce nao pode avaliar sua propria tarefa.');
-                    return;
-                  }
-                  setSelectedTask(item);
-                  setNota(5);
-                  setComentario('');
-                  setCategoriaNota('casa');
-                  setRateModalVisible(true);
-                }}
-              >
-                <MaterialCommunityIcons name="star-outline" size={16} color="#6a1b9a" />
-              </Pressable>
+            <View key={`${item.nome}-${i}`}>
+              <ListRow
+                left={<Avatar name={item.nome} size={44} ring={item.concluida ? 'success' : undefined} />}
+                title={me ? `${displayName(item.nome)} (você)` : displayName(item.nome)}
+                subtitle={
+                  <View style={{ gap: 2 }}>
+                    <AppText variant="caption" color="textMuted" numberOfLines={1}>{item.tarefa}</AppText>
+                    <View style={[styles.row, { gap: spacing.xs, flexWrap: 'wrap' }]}>
+                      <StatusPill label={item.concluida ? `Feita ${formatWeekdayTime(item.concluidaEm)}` : 'Pendente'} tone={item.concluida ? 'success' : 'neutral'} />
+                      {casa.total > 0 && <StatusPill icon="star" label={`${casa.media.toFixed(1)} · ${casa.total} de ${EXPECTED}`} tone="warning" />}
+                      {isBanheirao(item.tarefa) && ban.total > 0 && <StatusPill icon="shower" label={`${ban.media.toFixed(1)} · ${ban.total} de ${EXPECTED}`} tone="info" />}
+                    </View>
+                  </View>
+                }
+                right={
+                  <View style={[styles.row, { gap: spacing.xs }]}>
+                    {item.concluida && item.checkHasPhoto && (
+                      <PressableScale onPress={() => setPhotoTs(item.checkTs)} accessibilityLabel={`Ver foto da tarefa de ${displayName(item.nome)}`} style={[styles.thumbBtn, { borderRadius: radius.sm, backgroundColor: colors.surfaceAlt }]}>
+                        <Icon name="image-outline" size={20} color="primary" />
+                      </PressableScale>
+                    )}
+                    {!me && (
+                      <Button label={needs ? 'Avaliar' : 'Avaliado'} icon={needs ? 'star-outline' : 'check'} size="sm" variant={needs ? 'secondary' : 'ghost'} onPress={() => setRateTarget({ ...item, rated })} />
+                    )}
+                  </View>
+                }
+              />
+              {i < list.length - 1 && <Divider />}
             </View>
           );
         })}
-        {!loading && !escala.length && <Text style={[styles.text, { color: colors.muted }]}>Sem dados de escala no momento.</Text>}
-      </View>
+      </Card>
 
-      <Modal visible={rateModalVisible} transparent animationType="slide" onRequestClose={() => setRateModalVisible(false)}>
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalCard, { backgroundColor: colors.surface }]}>
-            <Text style={[styles.title, { color: colors.text, marginBottom: 4 }]}>Avaliar tarefa</Text>
-            <Text style={[styles.text, { color: colors.muted, marginBottom: 10 }]}>
-              {selectedTask?.nome} • {selectedTask?.tarefa}
-            </Text>
-            <View style={styles.starsRow}>
-              {[1, 2, 3, 4, 5].map((n) => (
-                <Pressable key={n} onPress={() => setNota(n)}>
-                  <MaterialCommunityIcons name={nota >= n ? 'star' : 'star-outline'} size={28} color={nota >= n ? '#ffb300' : '#b0b7c3'} />
-                </Pressable>
-              ))}
-            </View>
-            {hasBanheirao(selectedTask?.tarefa) && (
-              <View style={styles.categoryRow}>
-                <Pressable style={[styles.categoryBtn, categoriaNota === 'casa' && styles.categoryBtnActive]} onPress={() => setCategoriaNota('casa')}>
-                  <Text style={[styles.categoryBtnText, categoriaNota === 'casa' && styles.categoryBtnTextActive]}>Tarefa da casa</Text>
-                </Pressable>
-                <Pressable style={[styles.categoryBtn, categoriaNota === 'banheirao' && styles.categoryBtnActive]} onPress={() => setCategoriaNota('banheirao')}>
-                  <Text style={[styles.categoryBtnText, categoriaNota === 'banheirao' && styles.categoryBtnTextActive]}>Banheirao</Text>
-                </Pressable>
-              </View>
-            )}
-            <TextInput
-              value={comentario}
-              onChangeText={setComentario}
-              placeholder="Comentário opcional"
-              placeholderTextColor="#94a3b8"
-              style={styles.modalInput}
-            />
-            <View style={styles.modalActions}>
-              <Pressable style={styles.cancelBtn} onPress={() => setRateModalVisible(false)}>
-                <Text style={styles.cancelBtnText}>Cancelar</Text>
-              </Pressable>
-              <Pressable
-                style={[styles.confirmBtn, ratingSaving && { opacity: 0.75 }]}
-                onPress={async () => {
-                  if (ratingSaving) return;
-                  try {
-                    setRatingSaving(true);
-                    await rateTask({
-                      actor: resident,
-                      target: selectedTask?.nome,
-                      tarefa: selectedTask?.tarefa,
-                      nota,
-                      comentario,
-                      categoria: categoriaNota,
-                    });
-                    setRateModalVisible(false);
-                    await load('pull');
-                    Alert.alert('Sucesso', 'Avaliacao registrada para a semana.');
-                  } catch (e) {
-                    Alert.alert('Erro', e?.message || 'Nao foi possivel avaliar.');
-                  } finally {
-                    setRatingSaving(false);
-                  }
-                }}
-                disabled={ratingSaving}
-              >
-                <Text style={styles.confirmBtnText}>{ratingSaving ? 'Enviando...' : 'Enviar'}</Text>
-              </Pressable>
-            </View>
+      <Card onPress={() => navigation.navigate('Nilde')} variant="primary" accessibilityLabel="Abrir Nilde">
+        <View style={[styles.row, { gap: spacing.md }]}>
+          <Icon name="rabbit" size={28} color="onPrimarySoft" />
+          <View style={{ flex: 1 }}>
+            <AppText variant="bodyStrong" color="onPrimarySoft">Nilde (todo dia)</AppText>
+            <AppText variant="caption" color="onPrimarySoft">{nildeToday === null ? 'Feno à vontade, água fresca e 3 checks por dia.' : `Hoje: ${nildeToday} de 3 refeições registradas`}</AppText>
           </View>
+          <Icon name="chevron-right" color="onPrimarySoft" />
         </View>
-      </Modal>
-    </ScrollView>
+      </Card>
+
+      <RatingSheet target={rateTarget} onClose={() => setRateTarget(null)} />
+      <BottomSheet visible={!!photoTs} onClose={() => setPhotoTs('')} title="Comprovação">
+        {!!photoTs && <FeedPhoto ts={photoTs} />}
+      </BottomSheet>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
-  content: { padding: 16, paddingTop: 8, gap: 12, paddingBottom: 30 },
-  card: { borderWidth: 1, borderRadius: 20, padding: 14, shadowColor: '#2a1d52', shadowOpacity: 0.08, shadowRadius: 9, shadowOffset: { width: 0, height: 4 }, elevation: 3 },
-  rowBetween: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
-  title: { fontSize: 17, fontWeight: '800', marginBottom: 7 },
-  text: { fontSize: 13, fontWeight: '600', lineHeight: 20 },
-  item: { borderRadius: 16, padding: 13, marginBottom: 9, flexDirection: 'row', alignItems: 'center', gap: 10, borderLeftWidth: 4, borderLeftColor: '#6a1b9a', borderWidth: 1, borderColor: 'rgba(106,27,154,0.08)' },
-  itemDone: { borderLeftColor: '#00c853', backgroundColor: '#f1f8e9' },
-  check: { width: 32, height: 32, borderRadius: 10, borderWidth: 2, borderColor: '#b0b7c3', alignItems: 'center', justifyContent: 'center' },
-  itemName: { fontSize: 14, fontWeight: '800' },
-  itemTask: { fontSize: 12, marginTop: 3, fontWeight: '600' },
-  ratingText: { fontSize: 11, marginTop: 3, fontWeight: '600' },
-  loadingWrap: { paddingVertical: 12, alignItems: 'center' },
-  error: { fontSize: 12, fontWeight: '700', marginBottom: 8 },
-  progressPill: { borderRadius: 999, paddingHorizontal: 12, paddingVertical: 6, borderWidth: 1, borderColor: 'rgba(46,125,50,0.25)' },
-  progressText: { fontSize: 11, fontWeight: '800' },
-  avatar: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center', backgroundColor: '#6a1b9a' },
-  avatarPhoto: { width: 34, height: 34, borderRadius: 17, backgroundColor: '#fff' },
-  avatarDone: { backgroundColor: '#00c853' },
-  avatarText: { color: '#fff', fontSize: 12, fontWeight: '800' },
-  rateBtn: { width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center', backgroundColor: '#f3e5f5', borderWidth: 1, borderColor: '#e9d5ff' },
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' },
-  modalCard: { borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 16, paddingBottom: 28 },
-  starsRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10, paddingHorizontal: 10 },
-  categoryRow: { flexDirection: 'row', gap: 8, marginBottom: 10 },
-  categoryBtn: { flex: 1, borderWidth: 1, borderColor: '#d1d5db', borderRadius: 10, paddingVertical: 9, alignItems: 'center', backgroundColor: '#fff' },
-  categoryBtnActive: { borderColor: '#6a1b9a', backgroundColor: '#f3e5f5' },
-  categoryBtnText: { color: '#6b7280', fontSize: 12, fontWeight: '700' },
-  categoryBtnTextActive: { color: '#4a148c' },
-  modalInput: { borderWidth: 1, borderColor: '#d1d5db', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, marginBottom: 12, color: '#111827', fontWeight: '600' },
-  modalActions: { flexDirection: 'row', gap: 8 },
-  cancelBtn: { flex: 1, borderRadius: 10, borderWidth: 1, borderColor: '#d1d5db', paddingVertical: 11, alignItems: 'center', backgroundColor: '#fff' },
-  cancelBtnText: { color: '#6b7280', fontWeight: '700' },
-  confirmBtn: { flex: 1, borderRadius: 12, paddingVertical: 11, alignItems: 'center', backgroundColor: '#6a1b9a' },
-  confirmBtnText: { color: '#fff', fontWeight: '800' },
+  row: { flexDirection: 'row', alignItems: 'center' },
+  rowBetween: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  star: { width: 48, height: 48, alignItems: 'center', justifyContent: 'center' },
+  thumbBtn: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
 });
