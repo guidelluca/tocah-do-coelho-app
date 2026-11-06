@@ -1,7 +1,14 @@
 /***********************
- * BOAS-VINDAS — Felipe (versão teste + produção)
+ * BOAS-VINDAS — Guilherme (seus dados) e Felipe (versão teste + produção)
  * Visual igual ao app Tocah (roxo #6A1B9A, cards arredondados, fontes pesadas).
  ***********************/
+
+/** Com os dados do Guilherme (nome e e-mail dele) — para ver o e-mail como um morador recebe. */
+var EMAIL_GUILHERME = 'guilhermedeluca75@gmail.com';
+
+function enviarBoasVindasGuilherme() {
+  enviarBoasVindas_('GUILHERME', { teste: false, genero: 'o', email: EMAIL_GUILHERME, forcarEmail: true });
+}
 
 /** TESTE: envia sempre para guilhermedeluca75@gmail.com. */
 function enviarBoasVindasFelipeTESTE() {
@@ -52,6 +59,9 @@ function enviarBoasVindas_(nomeBusca, opcoes) {
   // Morador novo ainda fora do MORADORES_CONFIG: usa o nome e o e-mail informados.
   if (!morador && (opcoes.teste === true || opcoes.email)) {
     morador = { nome: nomeBusca, email: opcoes.email || '(e-mail ainda não cadastrado)' };
+  }
+  if (morador && opcoes.forcarEmail && opcoes.email) {
+    morador = { nome: morador.nome || nomeBusca, email: opcoes.email };
   }
   if (!morador) {
     ss.toast(
