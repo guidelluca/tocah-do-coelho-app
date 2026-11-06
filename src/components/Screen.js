@@ -20,16 +20,18 @@ export function Screen({ title, subtitle, onRefresh, children, footer, contentSt
     : undefined;
   return (
     <View style={[styles.fill, { backgroundColor: colors.bg }]}>
-      <AppHeader title={title} subtitle={subtitle} />
       <ScrollView
         ref={scrollRef}
         style={styles.fill}
-        contentContainerStyle={[{ padding: spacing.lg, paddingBottom: spacing.xxxl * 3 }, contentStyle]}
+        contentContainerStyle={{ paddingBottom: spacing.xxxl * 3 }}
         keyboardShouldPersistTaps="handled"
         refreshControl={handleRefresh ? <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={colors.primary} colors={[colors.primary]} /> : undefined}
       >
-        <OfflineBanner onRetry={handleRefresh} />
-        {children}
+        <AppHeader title={title} subtitle={subtitle} />
+        <View style={[{ padding: spacing.lg, paddingTop: spacing.md }, contentStyle]}>
+          <OfflineBanner onRetry={handleRefresh} />
+          {children}
+        </View>
       </ScrollView>
       {footer}
     </View>

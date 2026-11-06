@@ -2,7 +2,7 @@ import 'react-native-gesture-handler';
 import { useEffect } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { DarkTheme, DefaultTheme, NavigationContainer } from '@react-navigation/native';
-import { StyleSheet, View } from 'react-native';
+import { Platform, StyleSheet, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { ThemeProvider, useTheme } from './src/theme/ThemeContext';
 import { ResidentProvider } from './src/context/ResidentContext';
@@ -13,6 +13,29 @@ import { ensureConfig } from './src/services/api';
 import { FeedbackProvider } from './src/components/ui';
 import { FirstRunGate } from './src/components/FirstRunGate';
 import { AppNavigator } from './src/navigation/AppNavigator';
+
+/**
+ * Web (iPhone/Android): trava a tela para não "sambar".
+ * - sem zoom de pinça/duplo toque e sem zoom automático ao focar campos;
+ * - sem arrastar a página para os lados e sem o "elástico" do Safari.
+ */
+if (Platform.OS === 'web' && typeof document !== 'undefined') {
+  let meta = document.querySelector('meta[name="viewport"]');
+  if (!meta) {
+    meta = document.createElement('meta');
+    meta.setAttribute('name', 'viewport');
+    document.head.appendChild(meta);
+  }
+  meta.setAttribute('content', 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover');
+  const style = document.createElement('style');
+  style.textContent = [
+    'html, body, #root { height: 100%; width: 100%; overflow: hidden; overscroll-behavior: none; }',
+    'body { position: fixed; inset: 0; touch-action: manipulation; -webkit-text-size-adjust: 100%; }',
+    'input, textarea { font-size: 16px !important; }',
+    '* { -webkit-tap-highlight-color: transparent; }',
+  ].join('\n');
+  document.head.appendChild(style);
+}
 
 /** Cria a aba Config (com os textos padrão) na primeira vez que o app novo roda. */
 function ConfigBootstrap() {

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Platform, StyleSheet, View } from 'react-native';
 import { Screen } from '../components/Screen';
 import { RemoteImage, NILDE_SOURCES } from '../components/RemoteImage';
-import { AppText, BottomSheet, Button, Card, Icon, PressableScale, ProgressBar, SectionHeader, SkeletonCard, TextField, useFeedback } from '../components/ui';
+import { AppText, Avatar, BottomSheet, Button, Card, Icon, PressableScale, ProgressBar, SectionHeader, SkeletonCard, TextField, useFeedback } from '../components/ui';
 import { useResident } from '../context/ResidentContext';
 import { useTheme } from '../theme/ThemeContext';
 import { useNilde } from '../data/hooks';
@@ -96,7 +96,7 @@ export function NildeScreen() {
   };
 
   return (
-    <Screen title="Nilde" subtitle="A coelha da república" onRefresh={() => { invalidateResources('feed'); return nilde.refresh(); }}>
+    <Screen title="Nilde" subtitle="Nilde" onRefresh={() => { invalidateResources('feed'); return nilde.refresh(); }}>
       <View style={[styles.hero, { borderRadius: radius.lg, marginBottom: spacing.md }]}>
         <RemoteImage sources={NILDE_SOURCES} fallback={LOCAL_FALLBACK} style={StyleSheet.absoluteFill} accessibilityLabel="Foto da Nilde" />
         <View style={[styles.heroOverlay, { backgroundColor: colors.imageScrim, padding: spacing.lg }]}>
@@ -116,9 +116,18 @@ export function NildeScreen() {
             return (
               <Card key={slot.id} variant={entry ? 'success' : 'default'} padding="md">
                 <View style={[styles.row, { gap: spacing.md }]}>
-                  <View style={[styles.slotIcon, { backgroundColor: entry ? colors.surface : colors.primarySoft }]}>
-                    <Icon name={entry ? 'check' : slot.icon} size={24} color={entry ? 'success' : 'primary'} />
-                  </View>
+                  {entry ? (
+                    <View>
+                      <Avatar name={entry.by} size={44} ring="success" />
+                      <View style={[styles.checkBadge, { backgroundColor: colors.success, borderColor: colors.surface }]}>
+                        <Icon name="check" size={12} color="onSuccess" />
+                      </View>
+                    </View>
+                  ) : (
+                    <View style={[styles.slotIcon, { backgroundColor: colors.primarySoft }]}>
+                      <Icon name={slot.icon} size={24} color="primary" />
+                    </View>
+                  )}
                   <View style={{ flex: 1 }}>
                     <AppText variant="bodyStrong" color={entry ? 'onSuccessSoft' : 'text'}>{slot.short} · {slot.food}</AppText>
                     <AppText variant="caption" color={entry ? 'onSuccessSoft' : 'textMuted'}>
@@ -218,6 +227,7 @@ const styles = StyleSheet.create({
   rowBetween: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   wrap: { flexDirection: 'row', flexWrap: 'wrap' },
   slotIcon: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
+  checkBadge: { position: 'absolute', right: -3, bottom: -3, width: 20, height: 20, borderRadius: 10, alignItems: 'center', justifyContent: 'center', borderWidth: 2 },
   week: { flexDirection: 'row', justifyContent: 'space-between' },
   day: { flex: 1, alignItems: 'center' },
   dot: { width: 8, height: 8, borderRadius: 4 },

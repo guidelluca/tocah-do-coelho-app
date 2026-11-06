@@ -113,16 +113,19 @@ export const spacing = { xxs: 2, xs: 4, sm: 8, md: 12, lg: 16, xl: 20, xxl: 24, 
 
 export const radius = { sm: 8, md: 12, lg: 16, xl: 22, pill: 999 };
 
-/** Escala tipográfica: 6 tamanhos, pesos 400/600/700. */
+/**
+ * Escala tipográfica. Mesma fonte do sistema do app antigo (sem fonte customizada),
+ * com pesos fortes (700–900) como antes, só que com tamanhos mais legíveis.
+ */
 export const typography = {
-  display: { fontSize: 32, lineHeight: 38, fontWeight: '700', letterSpacing: -0.5 },
-  title: { fontSize: 22, lineHeight: 28, fontWeight: '700', letterSpacing: -0.2 },
-  heading: { fontSize: 17, lineHeight: 22, fontWeight: '600' },
-  body: { fontSize: 15, lineHeight: 21, fontWeight: '400' },
-  bodyStrong: { fontSize: 15, lineHeight: 21, fontWeight: '600' },
-  caption: { fontSize: 13, lineHeight: 18, fontWeight: '400' },
-  captionStrong: { fontSize: 13, lineHeight: 18, fontWeight: '600' },
-  overline: { fontSize: 11, lineHeight: 14, fontWeight: '700', letterSpacing: 0.7, textTransform: 'uppercase' },
+  display: { fontSize: 32, lineHeight: 38, fontWeight: '900' },
+  title: { fontSize: 22, lineHeight: 28, fontWeight: '900' },
+  heading: { fontSize: 17, lineHeight: 22, fontWeight: '800' },
+  body: { fontSize: 15, lineHeight: 21, fontWeight: '600' },
+  bodyStrong: { fontSize: 15, lineHeight: 21, fontWeight: '800' },
+  caption: { fontSize: 13, lineHeight: 18, fontWeight: '600' },
+  captionStrong: { fontSize: 13, lineHeight: 18, fontWeight: '800' },
+  overline: { fontSize: 11, lineHeight: 14, fontWeight: '800', letterSpacing: 0.7, textTransform: 'uppercase' },
 };
 
 export const touch = { min: 44 };

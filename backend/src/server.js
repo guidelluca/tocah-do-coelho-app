@@ -37,6 +37,8 @@ const {
   PROFILES_SHEET = 'Perfis',
   CONFIG_SHEET = 'Config',
   SETTLED_SHEET = 'AcertosQuitados',
+  /** Aba que o Apps Script de tarefas publica para o app (escala da semana atual). */
+  ESCALA_APP_SHEET = 'EscalaApp',
 } = process.env;
 
 const DEFAULT_FINANCE_MODE = 'AUTO';
@@ -276,6 +278,33 @@ async function storePhotoDataUrl(photoDataUrl = '') {
   return `PHOTO_REF:${id}`;
 }
 
+/**
+ * Lê só as linhas das fotos pedidas. Antes lia a aba TarefasFotos inteira (todas as fotos da história)
+ * a cada consulta — com o tempo isso fica pesado e pode estourar limite de resposta.
+ * 1) lê só a coluna A (ids, leve); 2) lê só os blocos de linhas daquelas fotos.
+ */
+async function readPhotoRows(ids) {
+  const idCol = await readRangeOrEmpty(`${TASK_PHOTOS_SHEET}!A:A`);
+  const wanted = new Set(ids);
+  const rowsNeeded = [];
+  idCol.forEach((r, i) => {
+    if (wanted.has(String(r[0] || '').trim())) rowsNeeded.push(i + 1);
+  });
+  if (!rowsNeeded.length) return [];
+  const blocks = [];
+  for (const row of rowsNeeded) {
+    const last = blocks[blocks.length - 1];
+    if (last && row <= last[1] + 1) last[1] = row;
+    else blocks.push([row, row]);
+  }
+  const out = [];
+  for (const [a, b] of blocks.slice(0, 40)) {
+    const rows = await readRangeOrEmpty(`${TASK_PHOTOS_SHEET}!A${a}:E${b}`);
+    out.push(...rows);
+  }
+  return out;
+}
+
 async function hydratePhotos(items = [], field = 'photoDataUrl') {
   const refs = Array.from(
     new Set(
@@ -287,7 +316,7 @@ async function hydratePhotos(items = [], field = 'photoDataUrl') {
     )
   );
   if (!refs.length) return items;
-  const photoRows = await readRangeOrEmpty(`${TASK_PHOTOS_SHEET}!A:E`);
+  const photoRows = await readPhotoRows(refs);
   const chunksById = {};
   for (const row of photoRows) {
     const id = String(row[0] || '').trim();
@@ -452,6 +481,23 @@ function feedWeeks(items) {
   return Array.from(new Set(items.map((x) => feedLib.itemWeek(x)).filter(Boolean))).sort(feedLib.sortWeekKeysDesc);
 }
 
+/** Escala da semana: 1º a aba EscalaApp (Apps Script), depois o formato antigo (nome → tarefa). */
+async function readEscala() {
+  const titles = await getSpreadsheetTitles();
+  if (titles.includes(ESCALA_APP_SHEET)) {
+    const list = feedLib.parseEscalaApp(await readRangeOrEmpty(`${ESCALA_APP_SHEET}!A:I`));
+    if (list.length) return { source: 'apps-script', list };
+  }
+  let rows = [];
+  try {
+    rows = await readRangeWithFallback(TAREFA_RANGE, ['Escala do Mês!A:Z', 'Tarefas!A:Z']);
+  } catch {
+    rows = [];
+  }
+  const legacy = feedLib.extractScale(rows);
+  return { source: legacy.length ? 'planilha' : 'padrao', list: legacy.length ? legacy : feedLib.defaultScale() };
+}
+
 async function taskStatusMap() {
   const wk = weekKey();
   const items = await readFeed();
@@ -499,31 +545,30 @@ const getActions = {
   },
 
   async getTarefaSemana({ usuario }) {
-    let rows = [];
-    try {
-      rows = await readRangeWithFallback(TAREFA_RANGE, ['Escala do Mês!A:Z', 'Tarefas!A:Z']);
-    } catch {
-      rows = [];
-    }
-    let tarefaNome = feedLib.extractTaskForUser(rows, usuario);
-    if (!tarefaNome) {
-      const fallback = feedLib.defaultScale().find((x) => norm(x.nome) === norm(usuario));
-      tarefaNome = rows.length ? '' : fallback?.tarefa || '';
-    }
-    const [config, status] = await Promise.all([readConfig().catch(() => Object.fromEntries(DEFAULT_CONFIG)), taskStatusMap().catch(() => ({ checks: {} }))]);
+    const [escala, config, status] = await Promise.all([
+      readEscala(),
+      readConfig().catch(() => Object.fromEntries(DEFAULT_CONFIG)),
+      taskStatusMap().catch(() => ({ checks: {} })),
+    ]);
+    const mine = escala.list.find((x) => norm(x.nome) === norm(usuario));
     const check = status.checks[feedLib.canonicalResident(usuario)];
-    return { tarefaNome, descricao: config.descricaoTarefa || '', week: weekKey(), ...statusFields(check) };
+    const descricao = mine?.descricao || config.descricaoTarefa || '';
+    return {
+      tarefaNome: mine && mine.tarefa !== '-' ? mine.tarefa : '',
+      descricao,
+      prazo: mine?.prazo || '',
+      frequencia: mine?.frequencia || '',
+      extra: mine?.extra || '',
+      extraDescricao: mine?.extraDescricao || '',
+      periodo: mine?.periodo || '',
+      fonte: escala.source,
+      week: weekKey(),
+      ...statusFields(check),
+    };
   },
 
   async getEscalaSemana() {
-    let rows = [];
-    try {
-      rows = await readRangeWithFallback(TAREFA_RANGE, ['Escala do Mês!A:Z', 'Tarefas!A:Z']);
-    } catch {
-      rows = [];
-    }
-    const escala = feedLib.extractScale(rows);
-    const list = escala.length ? escala : feedLib.defaultScale();
+    const escala = await readEscala();
     let checks = {};
     try {
       checks = (await taskStatusMap()).checks;
@@ -531,7 +576,7 @@ const getActions = {
       checks = {};
     }
     // Continua sendo um array (compatível com o app antigo); campos novos são extras.
-    return list.map((item) => ({ ...item, ...statusFields(checks[feedLib.canonicalResident(item.nome)]) }));
+    return escala.list.map((item) => ({ ...item, fonte: escala.source, ...statusFields(checks[feedLib.canonicalResident(item.nome)]) }));
   },
 
   async getTaskRatings({ strict, actor, history }) {
@@ -708,7 +753,8 @@ const postActions = {
     }
     if (!String(tarefaNome || '').trim()) {
       try {
-        tarefaNome = feedLib.extractTaskForUser(await readRangeWithFallback(TAREFA_RANGE, ['Escala do Mês!A:Z', 'Tarefas!A:Z']), usuario);
+        const escala = await readEscala();
+        tarefaNome = escala.list.find((x) => norm(x.nome) === norm(usuario))?.tarefa || '';
       } catch {
         tarefaNome = '';
       }

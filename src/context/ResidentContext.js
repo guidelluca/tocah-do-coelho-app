@@ -1,12 +1,16 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { RESIDENTS } from '../constants/residents';
 import { getProfiles, queryFor, setProfilePhoto } from '../services/api';
 import { invalidateResources, mutateResource, useResource } from '../data/store';
 import { norm } from '../utils/text';
+import { legacyUriToAvatar } from '../utils/photo';
 
 const STORAGE_KEY = '@tocah_selected_resident';
 const HIDE_VALUES_KEY = '@tocah_hide_values';
+/** Onde o app antigo guardava as fotos de perfil (só no aparelho). */
+const LEGACY_PHOTOS_KEY = '@tocah_resident_photos';
+const LEGACY_MIGRATED_KEY = '@tocah_resident_photos_migrated';
 const ResidentContext = createContext(null);
 
 /**
@@ -52,29 +56,66 @@ export function ResidentProvider({ children }) {
   }, []);
 
   const photoMap = profiles.data?.profiles || {};
+
+  // Migração: sobe para a planilha as fotos que o app antigo deixou salvas neste aparelho
+  // (só para quem ainda não tem foto na planilha). Roda uma vez por aparelho.
+  const migrating = useRef(false);
+  useEffect(() => {
+    if (migrating.current || !profiles.updatedAt) return;
+    migrating.current = true;
+    (async () => {
+      try {
+        if (await AsyncStorage.getItem(LEGACY_MIGRATED_KEY)) return;
+        const raw = await AsyncStorage.getItem(LEGACY_PHOTOS_KEY);
+        const legacy = raw ? JSON.parse(raw) : {};
+        let pending = false;
+        for (const [name, uri] of Object.entries(legacy || {})) {
+          const key = RESIDENTS.find((r) => norm(r) === norm(name));
+          if (!key || !uri || photoMap[key]?.photoDataUrl) continue;
+          const data = await legacyUriToAvatar(uri);
+          if (!data) continue;
+          try {
+            await setProfilePhoto({ nome: key, photoDataUrl: data });
+          } catch {
+            pending = true;
+          }
+        }
+        if (!pending) await AsyncStorage.setItem(LEGACY_MIGRATED_KEY, new Date().toISOString());
+        invalidateResources('profiles');
+      } catch {
+        // sem foto antiga ou formato inválido: nada a migrar
+      } finally {
+        migrating.current = false;
+      }
+    })();
+  }, [profiles.updatedAt]);
   const getResidentPhoto = useCallback((name) => {
     const key = RESIDENTS.find((r) => norm(r) === norm(name));
     return (key && photoMap[key]?.photoDataUrl) || '';
   }, [photoMap]);
 
-  /** Salva a foto (data URL já reduzida) na planilha: todo mundo passa a ver. Vazio remove. */
-  const updateMyPhoto = useCallback(async (photoDataUrl) => {
+  /** Salva a foto (data URL já reduzida) de QUALQUER morador na planilha: todo mundo passa a ver. Vazio remove. */
+  const updatePhoto = useCallback(async (name, photoDataUrl) => {
+    const key = RESIDENTS.find((r) => norm(r) === norm(name));
+    if (!key) throw new Error('Morador inválido.');
     mutateResource('profiles', (prev) => {
       const next = { ...(prev?.profiles || {}) };
-      if (photoDataUrl) next[resident] = { photoDataUrl, updatedAt: new Date().toISOString() };
-      else delete next[resident];
+      if (photoDataUrl) next[key] = { photoDataUrl, updatedAt: new Date().toISOString() };
+      else delete next[key];
       return { ...(prev || {}), profiles: next };
     });
     try {
-      return await setProfilePhoto({ nome: resident, photoDataUrl });
+      return await setProfilePhoto({ nome: key, photoDataUrl });
     } finally {
       invalidateResources('profiles');
     }
-  }, [resident]);
+  }, []);
+
+  const updateMyPhoto = useCallback((photoDataUrl) => updatePhoto(resident, photoDataUrl), [resident, updatePhoto]);
 
   const value = useMemo(
-    () => ({ ready, resident, hasChosen, selectResident, residents: RESIDENTS, getResidentPhoto, updateMyPhoto, valuesHidden, toggleValuesHidden }),
-    [ready, resident, hasChosen, selectResident, getResidentPhoto, updateMyPhoto, valuesHidden, toggleValuesHidden]
+    () => ({ ready, resident, hasChosen, selectResident, residents: RESIDENTS, getResidentPhoto, updatePhoto, updateMyPhoto, valuesHidden, toggleValuesHidden }),
+    [ready, resident, hasChosen, selectResident, getResidentPhoto, updatePhoto, updateMyPhoto, valuesHidden, toggleValuesHidden]
   );
   return <ResidentContext.Provider value={value}>{children}</ResidentContext.Provider>;
 }

@@ -5,17 +5,22 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../theme/ThemeContext';
 import { useResident } from '../context/ResidentContext';
 import { useNotifications } from '../context/NotificationContext';
-import { AppText, Avatar, IconButton, PressableScale } from './ui';
+import { displayName } from '../utils/text';
+import { AppText, Avatar, Icon, IconButton, PressableScale } from './ui';
 import { RemoteImage, LOGO_SOURCES } from './RemoteImage';
 import { NotificationsSheet } from './NotificationsSheet';
 import { ResidentSheet } from './ResidentSheet';
 
 const LOCAL_LOGO = require('../../assets/icon.png');
 
-/** Cabeçalho único de todas as abas: logo, título, tema, sino (funciona em todas) e avatar do morador. */
-export function AppHeader({ title = 'Tocah', subtitle = '' }) {
+/**
+ * Cabeçalho no estilo do app original: cartão roxo com a logo grande,
+ * "PAINEL DA CASA", o nome inteiro da república e uma linha de contexto.
+ * A linha "Morador" é tocável e abre a troca de morador/foto.
+ */
+export function AppHeader({ subtitle = '' }) {
   const insets = useSafeAreaInsets();
-  const { colors, isDark, toggleTheme, spacing, radius, shadow } = useTheme();
+  const { colors, isDark, toggleTheme, spacing, shadow } = useTheme();
   const { resident } = useResident();
   const { notificationCount, markNotificationsAsSeen } = useNotifications();
   const [bellOpen, setBellOpen] = useState(false);
@@ -27,21 +32,33 @@ export function AppHeader({ title = 'Tocah', subtitle = '' }) {
         colors={[colors.headerStart, colors.headerEnd]}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
-        style={[styles.wrap, shadow(2), { paddingTop: insets.top + spacing.sm, paddingHorizontal: spacing.lg, paddingBottom: spacing.md, borderBottomLeftRadius: radius.xl, borderBottomRightRadius: radius.xl }]}
+        style={[styles.wrap, shadow(2), { marginTop: insets.top + spacing.sm }]}
       >
-        <View style={[styles.orb, { backgroundColor: colors.onHeaderSurface }]} />
+        <View style={[styles.orbTop, { backgroundColor: colors.onHeaderSurface }]} />
+        <View style={[styles.orbBottom, { backgroundColor: colors.onHeaderSurface }]} />
         <View style={styles.left}>
-          <RemoteImage sources={LOGO_SOURCES} fallback={LOCAL_LOGO} style={[styles.logo, { borderColor: colors.onHeaderBorder }]} resizeMode="cover" accessibilityLabel="Logo da República Tocah do Coelho" />
-          <View style={{ flex: 1, minWidth: 0 }}>
-            <AppText variant="heading" color="onHeader" numberOfLines={1}>{title}</AppText>
-            {!!subtitle && <AppText variant="caption" color="onHeaderMuted" numberOfLines={1}>{subtitle}</AppText>}
+          <View style={[styles.logoRing, { backgroundColor: colors.onHeaderBorder }]}>
+            <RemoteImage sources={LOGO_SOURCES} fallback={LOCAL_LOGO} style={styles.logo} resizeMode="cover" accessibilityLabel="Logo da República Tocah do Coelho" />
+          </View>
+          <View style={styles.texts}>
+            <AppText variant="overline" color="onHeaderMuted">Painel da casa</AppText>
+            <AppText style={styles.title} color="onHeader" numberOfLines={2}>República Tocah do Coelho</AppText>
+            <PressableScale onPress={() => setMeOpen(true)} accessibilityLabel={`Morador: ${displayName(resident)}. Toque para trocar`} scaleTo={0.97} style={styles.meRow}>
+              <Avatar name={resident} size={20} />
+              <AppText variant="captionStrong" color="onHeader" numberOfLines={1} style={styles.meText}>
+                {displayName(resident)}{subtitle ? ` · ${subtitle}` : ''}
+              </AppText>
+              <Icon name="chevron-down" size={16} color="onHeaderMuted" />
+            </PressableScale>
           </View>
         </View>
         <View style={styles.right}>
-          <IconButton icon={isDark ? 'white-balance-sunny' : 'moon-waning-crescent'} variant="header" onPress={toggleTheme} accessibilityLabel={isDark ? 'Usar tema claro' : 'Usar tema escuro'} iconSize={20} />
+          <IconButton icon={isDark ? 'white-balance-sunny' : 'moon-waning-crescent'} variant="header" onPress={toggleTheme} accessibilityLabel={isDark ? 'Usar tema claro' : 'Usar tema escuro'} iconSize={19} size={40} />
           <IconButton
             icon="bell-outline"
             variant="header"
+            size={40}
+            iconSize={21}
             badge={notificationCount}
             accessibilityLabel={notificationCount ? `Notificações, ${notificationCount} novas` : 'Notificações'}
             onPress={() => {
@@ -49,9 +66,6 @@ export function AppHeader({ title = 'Tocah', subtitle = '' }) {
               markNotificationsAsSeen();
             }}
           />
-          <PressableScale onPress={() => setMeOpen(true)} accessibilityLabel={`Você é ${resident}. Trocar morador`} scaleTo={0.92} style={styles.me}>
-            <Avatar name={resident} size={40} ring="onHeader" />
-          </PressableScale>
         </View>
       </LinearGradient>
       <NotificationsSheet visible={bellOpen} onClose={() => setBellOpen(false)} />
@@ -61,10 +75,15 @@ export function AppHeader({ title = 'Tocah', subtitle = '' }) {
 }
 
 const styles = StyleSheet.create({
-  wrap: { flexDirection: 'row', alignItems: 'center', overflow: 'hidden', gap: 8 },
-  orb: { position: 'absolute', width: 160, height: 160, borderRadius: 80, top: -70, right: 40 },
-  left: { flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1, minWidth: 0 },
-  logo: { width: 40, height: 40, borderRadius: 20, borderWidth: 2 },
+  wrap: { marginHorizontal: 12, marginBottom: 6, borderRadius: 26, paddingHorizontal: 14, paddingVertical: 14, flexDirection: 'row', alignItems: 'center', overflow: 'hidden', gap: 8 },
+  orbTop: { position: 'absolute', top: -34, right: -16, width: 120, height: 120, borderRadius: 60 },
+  orbBottom: { position: 'absolute', bottom: -50, left: -34, width: 140, height: 140, borderRadius: 70, opacity: 0.6 },
+  left: { flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 },
+  logoRing: { width: 56, height: 56, borderRadius: 28, padding: 2 },
+  logo: { width: '100%', height: '100%', borderRadius: 26 },
+  texts: { flex: 1, minWidth: 0 },
+  title: { fontSize: 18, lineHeight: 21, fontWeight: '900' },
+  meRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4, minHeight: 28, alignSelf: 'flex-start', maxWidth: '100%' },
+  meText: { flexShrink: 1 },
   right: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  me: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
 });

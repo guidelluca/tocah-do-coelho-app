@@ -3,7 +3,7 @@ import { Pressable, StyleSheet, Switch, View } from 'react-native';
 import { AppText, Avatar, BottomSheet, Button, Card, Chip, Icon, TextField, useFeedback } from '../../components/ui';
 import { useResident } from '../../context/ResidentContext';
 import { useTheme } from '../../theme/ThemeContext';
-import { addCollectiveExpense, addSettlements, isConflict, updateCollectiveExpense, updateFinanceEntry } from '../../services/api';
+import { addHouseExpense, addSettlements, isConflict, updateCollectiveExpense, updateFinanceEntry } from '../../services/api';
 import { invalidateResources } from '../../data/store';
 import { brl, formatMoneyInput, moneyInputFromValue, toNumber, toSheetMoney } from '../../utils/money';
 import { autoObs, displayName, isLinkedToCollective, norm, sameName, userObs } from '../../utils/text';
@@ -39,6 +39,7 @@ function PeoplePicker({ label, value, onChange, multi, exclude = [], hint }) {
             <Chip
               key={nome}
               label={displayName(nome)}
+              left={<Avatar name={nome} size={24} style={{ marginLeft: -6 }} />}
               selected={active}
               onPress={() => {
                 if (!multi) return onChange(nome);
@@ -54,7 +55,8 @@ function PeoplePicker({ label, value, onChange, multi, exclude = [], hint }) {
 }
 
 const TITLES = {
-  'coletivo:new': 'Novo gasto coletivo',
+  'coletivo:new': 'Gasto da casa',
+  'divisao:new': 'Dividir com algumas pessoas',
   'coletivo:edit': 'Editar gasto coletivo',
   'acerto:new': 'Novo acerto',
   'acerto:edit': 'Editar acerto',
@@ -65,7 +67,7 @@ const TITLES = {
  * Formulário único para lançar/editar.
  * kind: 'coletivo' | 'acerto' | 'conta'; item: linha da planilha quando for edição.
  */
-export function EntrySheet({ open, kind, item, activeSheet, onClose }) {
+export function EntrySheet({ open, kind, item, activeSheet, onClose, moradores = 5 }) {
   const { resident } = useResident();
   const { spacing, colors } = useTheme();
   const { toast, toastError } = useFeedback();
@@ -78,10 +80,12 @@ export function EntrySheet({ open, kind, item, activeSheet, onClose }) {
   useEffect(() => {
     if (!open) return;
     setErrors({});
-    if (kind === 'coletivo') {
+    if (kind === 'divisao') {
+      setForm({ payer: resident, oQue: '', valor: '', obs: '', devedores: [], incluirPagador: true });
+    } else if (kind === 'coletivo') {
       setForm(editing
         ? { payer: item.quem, oQue: item.oQue, valor: moneyInputFromValue(item.quanto), obs: userObs(item.obs) }
-        : { payer: resident, oQue: '', valor: '', obs: '', devedores: [], incluirPagador: false });
+        : { payer: resident, oQue: '', valor: '', obs: '' });
     } else if (kind === 'acerto') {
       setForm(editing
         ? { quem: item.quem, paraQuem: item.paraQuem, valor: moneyInputFromValue(item.deveQuanto), obs: item.obs }
@@ -94,17 +98,17 @@ export function EntrySheet({ open, kind, item, activeSheet, onClose }) {
   const total = toNumber(form.valor);
   const debtors = (form.devedores || []).filter((n) => !sameName(n, kind === 'acerto' ? form.credor : form.payer));
   const shares = useMemo(() => {
-    if (kind === 'coletivo' && !editing) return previewShares(total, debtors.length + (form.incluirPagador ? 1 : 0)).slice(0, debtors.length);
+    if (kind === 'divisao') return previewShares(total, debtors.length + (form.incluirPagador ? 1 : 0)).slice(0, debtors.length);
     if (kind === 'acerto' && !editing) return previewShares(total, debtors.length);
     return [];
   }, [kind, editing, total, debtors.length, form.incluirPagador]);
 
   const validate = () => {
     const e = {};
-    if (kind === 'coletivo') {
+    if (kind === 'coletivo' || kind === 'divisao') {
       if (!String(form.oQue || '').trim()) e.oQue = 'O que foi comprado?';
       if (!total) e.valor = 'Informe o valor.';
-      if (!editing && !debtors.length) e.devedores = 'Escolha com quem dividir.';
+      if (kind === 'divisao' && !debtors.length) e.devedores = 'Escolha com quem dividir.';
     } else if (kind === 'acerto') {
       if (!total) e.valor = 'Informe o valor.';
       if (!editing && !debtors.length) e.devedores = 'Escolha quem deve.';
@@ -123,7 +127,16 @@ export function EntrySheet({ open, kind, item, activeSheet, onClose }) {
     try {
       let res;
       if (kind === 'coletivo' && !editing) {
-        res = await addCollectiveExpense({ payer: form.payer, oQue: form.oQue.trim(), valor: toSheetMoney(form.valor), obs: form.obs.trim(), devedores: debtors, incluirPagador: !!form.incluirPagador, expectedSheet: activeSheet });
+        res = await addHouseExpense({ payer: form.payer, oQue: form.oQue.trim(), valor: toSheetMoney(form.valor), obs: form.obs.trim() });
+        res = { ...res, message: 'Gasto da casa lançado em Gastos coletivos.' };
+      } else if (kind === 'divisao') {
+        // Só acertos: uma linha por pessoa que deve a quem pagou. Se quem pagou entra na divisão,
+        // a parte dele fica com ele (o total enviado é só a soma das partes dos devedores).
+        const partes = debtors.length + (form.incluirPagador ? 1 : 0);
+        const somaDevedores = previewShares(total, partes).slice(0, debtors.length).reduce((a, b) => a + b, 0);
+        const obsFinal = [form.oQue.trim(), form.obs.trim(), form.incluirPagador ? `dividido em ${partes} com ${displayName(form.payer)}` : ''].filter(Boolean).join(' · ');
+        res = await addSettlements({ credor: form.payer, devedores: debtors, valorTotal: somaDevedores.toFixed(2), obs: obsFinal, expectedSheet: activeSheet });
+        res = { ...res, message: `${debtors.length} acerto(s) lançado(s) para ${displayName(form.payer)}.` };
       } else if (kind === 'coletivo') {
         const payload = { quem: form.payer, oQue: form.oQue.trim(), quanto: toSheetMoney(form.valor) };
         if (norm(form.obs) !== norm(userObs(item.obs))) payload.obs = form.obs.trim();
@@ -167,49 +180,55 @@ export function EntrySheet({ open, kind, item, activeSheet, onClose }) {
     >
       {kind === 'coletivo' && (
         <>
-          <PeoplePicker label="Quem pagou" value={form.payer} onChange={(payer) => set({ payer, devedores: (form.devedores || []).filter((n) => !sameName(n, payer)) })} />
-          <TextField label="O que foi" value={form.oQue} onChangeText={(oQue) => set({ oQue })} placeholder="Ex.: mercado, gás, pizza" error={errors.oQue} />
+          <PeoplePicker label="Quem pagou" value={form.payer} onChange={(payer) => set({ payer })} />
+          <TextField label="O que foi" value={form.oQue} onChangeText={(oQue) => set({ oQue })} placeholder="Ex.: mercado, gás, produtos de limpeza" error={errors.oQue} />
           {valorField('Valor total')}
-          {!editing && (
-            <>
-              <PeoplePicker label="Dividir com" value={form.devedores || []} onChange={(devedores) => set({ devedores })} multi exclude={[form.payer]} hint={errors.devedores} />
-              <Pressable onPress={() => set({ incluirPagador: !form.incluirPagador })} style={[styles.switchRow, { marginBottom: spacing.md }]} accessibilityRole="switch" accessibilityState={{ checked: !!form.incluirPagador }}>
-                <View style={{ flex: 1 }}>
-                  <AppText variant="bodyStrong">{displayName(form.payer)} também entra na divisão</AppText>
-                  <AppText variant="caption" color="textMuted">Desligado = o valor é dividido só entre quem foi marcado acima (regra atual do app).</AppText>
-                </View>
-                <View pointerEvents="none">
-                  <Switch value={!!form.incluirPagador} trackColor={{ true: colors.primary, false: colors.borderStrong }} thumbColor={colors.surface} />
-                </View>
-              </Pressable>
-              {!!shares.length && (
-                <Card variant="primary" padding="md" style={{ marginBottom: spacing.md }}>
-                  <AppText variant="captionStrong" color="onPrimarySoft" style={{ marginBottom: spacing.xs }}>Vai ficar assim</AppText>
-                  {debtors.map((n, i) => (
-                    <View key={n} style={styles.rowBetween}>
-                      <AppText variant="body" color="onPrimarySoft">{displayName(n)} deve a {displayName(form.payer)}</AppText>
-                      <AppText variant="bodyStrong" color="onPrimarySoft" tabular>{brl(shares[i])}</AppText>
-                    </View>
-                  ))}
-                  {form.incluirPagador && <AppText variant="caption" color="onPrimarySoft" style={{ marginTop: spacing.xs }}>A parte de {displayName(form.payer)} ({brl(previewShares(total, debtors.length + 1).slice(-1)[0])}) fica com ele.</AppText>}
-                </Card>
-              )}
-            </>
+          <Card variant="primary" padding="md" style={{ marginBottom: spacing.md }}>
+            <View style={styles.rowStart}>
+              <Icon name="home-variant-outline" size={18} color="onPrimarySoft" />
+              <AppText variant="caption" color="onPrimarySoft" style={{ flex: 1 }}>
+                {editing
+                  ? 'Gasto da casa: fica em Gastos coletivos e é dividido igualmente entre todos.'
+                  : `Vai para Gastos coletivos e é dividido igualmente entre os ${moradores} moradores${total ? ` (${brl(total / Math.max(1, moradores))} cada)` : ''}. Não cria acertos individuais.`}
+              </AppText>
+            </View>
+          </Card>
+          {editing && isLinkedToCollective(item.obs) && (
+            <AppText variant="caption" color="textMuted" style={{ marginBottom: spacing.md }}>Os acertos ligados a este gasto são recalculados sozinhos.</AppText>
           )}
-          {editing && (
-            <Card variant="sunken" padding="md" style={{ marginBottom: spacing.md }}>
-              <View style={styles.rowStart}>
-                <Icon name="information-outline" size={18} color="textMuted" />
-                <AppText variant="caption" color="textMuted" style={{ flex: 1 }}>
-                  {isLinkedToCollective(item.obs)
-                    ? 'Os acertos ligados a este gasto são recalculados sozinhos com o novo valor/pagador.'
-                    : 'Este gasto foi lançado antes da atualização: os acertos dele não mudam sozinhos. Ajuste-os na aba Acertos se precisar.'}
-                </AppText>
-              </View>
-              {!!autoObs(item.obs) && <AppText variant="caption" color="textSubtle" style={{ marginTop: spacing.xs }}>{autoObs(item.obs)}</AppText>}
+          {editing && !!autoObs(item.obs) && <AppText variant="caption" color="textSubtle" style={{ marginBottom: spacing.md }}>{autoObs(item.obs)}</AppText>}
+          <TextField label="Observação (opcional)" value={form.obs} onChangeText={(obs) => set({ obs })} placeholder="Onde, nota fiscal, etc." />
+        </>
+      )}
+
+      {kind === 'divisao' && (
+        <>
+          <PeoplePicker label="Quem pagou" value={form.payer} onChange={(payer) => set({ payer, devedores: (form.devedores || []).filter((n) => !sameName(n, payer)) })} />
+          <TextField label="O que foi" value={form.oQue} onChangeText={(oQue) => set({ oQue })} placeholder="Ex.: pizza, Uber, ingresso" error={errors.oQue} />
+          {valorField('Valor total')}
+          <PeoplePicker label="Dividir com" value={form.devedores || []} onChange={(devedores) => set({ devedores })} multi exclude={[form.payer]} hint={errors.devedores} />
+          <Pressable onPress={() => set({ incluirPagador: !form.incluirPagador })} style={[styles.switchRow, { marginBottom: spacing.md }]} accessibilityRole="switch" accessibilityState={{ checked: !!form.incluirPagador }}>
+            <View style={{ flex: 1 }}>
+              <AppText variant="bodyStrong">{displayName(form.payer)} também entra na divisão</AppText>
+              <AppText variant="caption" color="textMuted">{form.incluirPagador ? 'Ligado: o valor é dividido entre quem pagou e as pessoas marcadas.' : 'Desligado: o valor é dividido só entre as pessoas marcadas.'}</AppText>
+            </View>
+            <View pointerEvents="none">
+              <Switch value={!!form.incluirPagador} trackColor={{ true: colors.primary, false: colors.borderStrong }} thumbColor={colors.surface} />
+            </View>
+          </Pressable>
+          {!!shares.length && (
+            <Card variant="primary" padding="md" style={{ marginBottom: spacing.md }}>
+              <AppText variant="captionStrong" color="onPrimarySoft" style={{ marginBottom: spacing.xs }}>Vai para Acertos individuais assim</AppText>
+              {debtors.map((n, i) => (
+                <View key={n} style={styles.rowBetween}>
+                  <AppText variant="body" color="onPrimarySoft">{displayName(n)} deve a {displayName(form.payer)}</AppText>
+                  <AppText variant="bodyStrong" color="onPrimarySoft" tabular>{brl(shares[i])}</AppText>
+                </View>
+              ))}
+              {form.incluirPagador && <AppText variant="caption" color="onPrimarySoft" style={{ marginTop: spacing.xs }}>A parte de {displayName(form.payer)} ({brl(previewShares(total, debtors.length + 1).slice(-1)[0])}) fica com ele.</AppText>}
             </Card>
           )}
-          <TextField label="Observação (opcional)" value={form.obs} onChangeText={(obs) => set({ obs })} placeholder="Onde, nota fiscal, etc." />
+          <TextField label="Observação (opcional)" value={form.obs} onChangeText={(obs) => set({ obs })} placeholder="Ex.: pizza de sexta" />
         </>
       )}
 

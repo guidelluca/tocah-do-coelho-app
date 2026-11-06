@@ -78,5 +78,21 @@ Nilde e status de tarefa **não** precisam de aba nova: saem dos posts que já e
 - O app pergunta "o que mudou?" a cada 15 s (`getSyncState`, que fica em memória no servidor e faz **zero** leituras no Sheets). Só recarrega o que mudou, mais uma atualização geral a cada 2 min (para pegar edições feitas à mão).
 - O polling para quando a aba do navegador fica em segundo plano.
 - O feed vem sem fotos (≈ 4 KB em vez de ≈ 170 KB por consulta no teste). Cada foto é baixada uma vez, só quando aparece na tela.
-- No web as fotos são reduzidas no navegador antes do envio (até 1080 px; perfil 256 px).
+- No web as fotos são reduzidas no navegador antes do envio (até 900 px; perfil 256 px).
+- Para remontar uma foto, o backend lê só as linhas dela em `TarefasFotos` (antes lia a aba inteira, com todas as fotos da história).
 - Respostas grandes vão com gzip (zlib nativo do Node).
+
+## Fotos de perfil
+
+Toque no seu avatar (canto superior direito) → "Fotos de perfil". Dá para trocar a foto de **qualquer morador**, não só a sua. A foto fica na aba `Perfis` e todos veem a mesma.
+
+## Plano grátis: o que fica de olho
+
+| Serviço | Limite grátis | Situação |
+|---|---|---|
+| Render (backend) | Dorme após 15 min sem uso; 750 h/mês | Ok. Primeiro acesso após dormir leva 30–60 s (o app mostra "acordando o servidor"). Ping opcional mantém acordado. |
+| GitHub Pages | Grátis em repositório **público** | Se o repositório for privado, o Pages exige plano pago. Como já está no ar, não muda nada. |
+| Google Sheets API | 300 leituras/min por projeto, 60/min por usuário | Folgado: o app agora lê bem menos. |
+| Planilha | 10 milhões de células; 50 mil caracteres por célula | **Fotos** são o único ponto de atenção (ver abaixo). |
+
+**Fotos na planilha:** cada foto vira 2–3 células de texto em `TarefasFotos`. Com ~20 fotos/semana, isso dá uns 3 mil células por ano: longe do limite. O que cresce é o **peso**: a aba fica pesada para abrir à mão depois de alguns meses. Se ficar lenta, dá para apagar linhas antigas de `TarefasFotos` (os posts antigos ficam sem foto, mais nada quebra).

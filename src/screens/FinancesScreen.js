@@ -4,7 +4,7 @@ import { useRoute } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Screen } from '../components/Screen';
 import { RentDetailSheet } from '../components/RentDetailSheet';
-import { AppText, Avatar, BottomSheet, Button, Card, Chip, Divider, EmptyState, Icon, ListRow, MoneyText, PressableScale, ProgressBar, Segmented, SkeletonCard, StatusPill, useFeedback } from '../components/ui';
+import { AppText, Avatar, BottomSheet, Button, Card, Chip, Divider, EmptyState, Icon, ListRow, MoneyText, PressableScale, ProgressBar, SkeletonCard, StatusPill, useFeedback } from '../components/ui';
 import { useResident } from '../context/ResidentContext';
 import { useTheme } from '../theme/ThemeContext';
 import { useFinance } from '../data/hooks';
@@ -35,7 +35,7 @@ export function FinancesScreen() {
   const { toast, toastError, confirm } = useFeedback();
   const [sheetView, setSheetView] = useState('');
   const finance = useFinance(sheetView);
-  const [tab, setTab] = useState('contas');
+  const [tab, setTab] = useState('geral');
   const [acertoFilter, setAcertoFilter] = useState('todos');
   const [entry, setEntry] = useState(null); // { kind, item }
   const [actionsFor, setActionsFor] = useState(null); // { kind, item }
@@ -55,8 +55,7 @@ export function FinancesScreen() {
     const p = route.params || {};
     if (p.action === 'newExpense') {
       setSheetView('');
-      setTab('coletivos');
-      setEntry({ kind: 'coletivo' });
+      setFabOpen(true);
     }
     if (p.tab) setTab(p.tab);
   }, [route.params?.at]);
@@ -79,7 +78,7 @@ export function FinancesScreen() {
     return { totalContas, paidCount: paid.length, paidValue, late, coletivos, iOwe, owedToMe };
   }, [contas, fin.gastosColetivos, fin.acertosIndividuais, resident, sheet]);
   const myRow = (fin.residents || []).find((r) => sameName(r.nome, resident));
-  const acertos = (fin.acertosIndividuais || []).filter((a) => acertoFilter === 'todos' || sameName(a.quem, resident) || sameName(a.paraQuem, resident));
+  const acertos = (fin.acertosIndividuais || []).filter((a) => tab === 'geral' || acertoFilter === 'todos' || sameName(a.quem, resident) || sameName(a.paraQuem, resident));
 
   /* ---------- ações ---------- */
 
@@ -109,7 +108,7 @@ export function FinancesScreen() {
     const linked = kind === 'coletivo' && isLinkedToCollective(item.obs);
     const labels = {
       conta: { title: `Excluir “${item.conta}”?`, message: 'A linha some da aba do mês na planilha.' },
-      coletivo: { title: `Excluir “${item.oQue}”?`, message: linked ? 'Os acertos gerados por este gasto também serão apagados.' : 'Os acertos lançados antes da atualização não são apagados juntos.' },
+      coletivo: { title: `Excluir “${item.oQue}”?`, message: linked ? 'Os acertos gerados por este gasto também serão apagados.' : 'A linha sai de Gastos coletivos na aba do mês.' },
       acerto: { title: 'Excluir acerto?', message: `${displayName(item.quem)} deve ${brl(item.deveQuanto)} a ${displayName(item.paraQuem)}. Se já foi pago, prefira “Quitar” (guarda histórico).` },
     }[kind];
     if (!(await confirm({ ...labels, confirmLabel: 'Excluir', destructive: true, icon: 'trash-can-outline' }))) return;
@@ -131,11 +130,25 @@ export function FinancesScreen() {
 
   /* ---------- render ---------- */
 
+  const geral = tab === 'geral';
+  const show = (key) => geral || tab === key;
+  const totalAcertosAbertos = (fin.acertosIndividuais || []).reduce((a, x) => a + toNumber(x.deveQuanto), 0);
+  const totalAlugueis = (fin.residents || []).reduce((a, r) => a + toNumber(r.total), 0);
+  const SectionHead = ({ title, icon, right, target }) => (
+    <PressableScale onPress={() => setTab(target)} accessibilityLabel={`Ver só ${title}`} style={[styles.sectionHead, { marginTop: spacing.lg, marginBottom: spacing.sm }]}>
+      <Icon name={icon} size={20} color="primary" />
+      <AppText variant="heading" style={{ flex: 1 }}>{title}</AppText>
+      <AppText variant="bodyStrong" color="primary" tabular>{right}</AppText>
+      <Icon name="chevron-right" size={18} color="textSubtle" />
+    </PressableScale>
+  );
+
   const tabs = [
+    { value: 'geral', label: 'Geral' },
     { value: 'contas', label: 'Contas', count: contas.length },
     { value: 'coletivos', label: 'Coletivos', count: (fin.gastosColetivos || []).length },
     { value: 'acertos', label: 'Acertos', count: (fin.acertosIndividuais || []).length },
-    { value: 'moradores', label: 'Casa' },
+    { value: 'moradores', label: 'Aluguéis' },
   ];
 
   const fab = !readOnly && (
@@ -150,11 +163,11 @@ export function FinancesScreen() {
   );
 
   return (
-    <Screen title="Finanças" subtitle={fin.mesLabel || 'Carregando…'} onRefresh={finance.refresh} footer={fab}>
+    <Screen title="Finanças" subtitle={fin.mesLabel ? `Finanças · ${fin.mesLabel}` : 'Finanças'} onRefresh={finance.refresh} footer={fab}>
       {/* Mês */}
       {(fin.availableMonths || []).length > 1 && (
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm, paddingBottom: spacing.md }}>
-          {fin.availableMonths.slice(0, 8).map((m) => {
+          {fin.availableMonths.slice(0, 12).map((m) => {
             const isActiveMonth = m.title === fin.activeSheet;
             return (
               <Chip
@@ -214,9 +227,32 @@ export function FinancesScreen() {
             {totals.late > 0 && <StatusPill label={`${totals.late} atrasada(s)`} tone="danger" icon="alert" style={{ marginTop: spacing.sm }} />}
           </Card>
 
-          <Segmented options={tabs} value={tab} onChange={setTab} style={{ marginBottom: spacing.md }} />
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm, paddingBottom: spacing.md }}>
+            {tabs.map((t) => (
+              <Chip key={t.value} label={t.label} count={t.count} selected={tab === t.value} onPress={() => setTab(t.value)} />
+            ))}
+          </ScrollView>
 
-          {tab === 'contas' && (
+          {geral && (
+            <Card variant="sunken" padding="md">
+              <AppText variant="overline" color="textMuted" style={{ marginBottom: spacing.sm }}>Consolidado de {fin.mesLabel || 'mês'}</AppText>
+              {[
+                { label: 'Contas fixas', value: brl(totals.totalContas), hint: `${totals.paidCount} de ${contas.length} pagas · ${brl(totals.totalContas / moradores)} por morador`, target: 'contas', icon: 'file-document-outline' },
+                { label: 'Gastos coletivos', value: brl(totals.coletivos), hint: `${(fin.gastosColetivos || []).length} lançamento(s) · ${brl(totals.coletivos / moradores)} por morador`, target: 'coletivos', icon: 'cart-outline' },
+                { label: 'Acertos em aberto', value: brl(totalAcertosAbertos), hint: `${(fin.acertosIndividuais || []).length} acerto(s) entre moradores`, target: 'acertos', icon: 'handshake-outline' },
+                { label: 'Aluguéis da casa', value: brl(totalAlugueis), hint: `Soma do total dos ${(fin.residents || []).length} moradores`, target: 'moradores', icon: 'home-city-outline' },
+              ].map((row, i) => (
+                <View key={row.target}>
+                  <ListRow onPress={() => setTab(row.target)} left={<Icon name={row.icon} color="primary" size={22} />} title={row.label} subtitle={row.hint} right={<AppText variant="bodyStrong" tabular>{row.value}</AppText>} chevron style={{ paddingVertical: spacing.sm }} />
+                  {i < 3 && <Divider />}
+                </View>
+              ))}
+            </Card>
+          )}
+
+          {show('contas') && (
+            <>
+            {geral && <SectionHead title="Contas fixas" icon="file-document-outline" right={brl(totals.totalContas)} target="contas" />}
             <Card padding="md">
               {!contas.length && <EmptyState icon="file-document-outline" title="Nenhuma conta fixa" message="As contas vêm do bloco “Conta / Valor” da aba do mês." compact />}
               {contas.map((c, i) => {
@@ -256,9 +292,12 @@ export function FinancesScreen() {
                 </View>
               )}
             </Card>
+            </>
           )}
 
-          {tab === 'coletivos' && (
+          {show('coletivos') && (
+            <>
+            {geral && <SectionHead title="Gastos coletivos" icon="cart-outline" right={brl(totals.coletivos)} target="coletivos" />}
             <Card padding="md">
               {!(fin.gastosColetivos || []).length && <EmptyState icon="cart-outline" title="Nenhum gasto coletivo" message="Comprou algo pra casa? Toque em Lançar." compact />}
               {(fin.gastosColetivos || []).map((g, i, arr) => (
@@ -280,16 +319,18 @@ export function FinancesScreen() {
                 </View>
               )}
             </Card>
+            </>
           )}
 
-          {tab === 'acertos' && (
+          {show('acertos') && (
             <>
-              <View style={[styles.row, { gap: spacing.sm, marginBottom: spacing.md }]}>
+              {geral && <SectionHead title="Acertos individuais" icon="handshake-outline" right={brl(totalAcertosAbertos)} target="acertos" />}
+              {!geral && <View style={[styles.row, { gap: spacing.sm, marginBottom: spacing.md }]}>
                 <Chip label="Todos" selected={acertoFilter === 'todos'} onPress={() => setAcertoFilter('todos')} />
                 <Chip label="Só os meus" selected={acertoFilter === 'meus'} onPress={() => setAcertoFilter('meus')} />
                 <View style={{ flex: 1 }} />
                 <Button label="Histórico" variant="ghost" size="sm" icon="history" onPress={() => setHistoryOpen(true)} />
-              </View>
+              </View>}
               <Card padding="md">
                 {!acertos.length && <EmptyState icon="handshake-outline" title="Ninguém deve nada" message="Tudo em dia por aqui." compact />}
                 {acertos.map((a, i) => {
@@ -312,7 +353,9 @@ export function FinancesScreen() {
             </>
           )}
 
-          {tab === 'moradores' && (
+          {show('moradores') && (
+            <>
+            {geral && <SectionHead title="Aluguel por morador" icon="home-city-outline" right={brl(totalAlugueis)} target="moradores" />}
             <Card padding="md">
               {(fin.residents || []).map((r, i) => (
                 <View key={r.nome}>
@@ -321,6 +364,7 @@ export function FinancesScreen() {
                 </View>
               ))}
             </Card>
+            </>
           )}
         </>
       )}
@@ -348,8 +392,9 @@ export function FinancesScreen() {
 
       {/* Novo lançamento */}
       <BottomSheet visible={fabOpen} onClose={() => setFabOpen(false)} title="Lançar" subtitle={`Vai para a aba ${fin.activeSheet || 'do mês'}`}>
-        <ListRow left={<Icon name="cart-plus" color="primary" size={24} />} title="Gasto coletivo" subtitle="Comprei algo para a casa e quero dividir" onPress={() => { setFabOpen(false); setEntry({ kind: 'coletivo' }); }} chevron />
-        <ListRow left={<Icon name="account-cash-outline" color="primary" size={24} />} title="Acerto / empréstimo" subtitle="Alguém me deve (ou eu devo) um valor" onPress={() => { setFabOpen(false); setEntry({ kind: 'acerto' }); }} chevron />
+        <ListRow left={<Icon name="cart-plus" color="primary" size={24} />} title="Gasto da casa" subtitle={`Comprei algo para a casa: divide igual entre os ${moradores} (Gastos coletivos)`} onPress={() => { setFabOpen(false); setEntry({ kind: 'coletivo' }); }} chevron />
+        <ListRow left={<Icon name="account-multiple-outline" color="primary" size={24} />} title="Dividir com algumas pessoas" subtitle="Ex.: paguei e divido com 2 pessoas (vai para Acertos)" onPress={() => { setFabOpen(false); setEntry({ kind: 'divisao' }); }} chevron />
+        <ListRow left={<Icon name="account-cash-outline" color="primary" size={24} />} title="Empréstimo / acerto" subtitle="Emprestei um valor (sem compra para dividir)" onPress={() => { setFabOpen(false); setEntry({ kind: 'acerto' }); }} chevron />
         <ListRow left={<Icon name="file-document-edit-outline" color="primary" size={24} />} title="Alterar conta fixa" subtitle="Valor, vencimento ou se está paga" onPress={() => { setFabOpen(false); setTab('contas'); toast('Toque na conta que quer alterar.', 'info'); }} chevron />
       </BottomSheet>
 
@@ -361,7 +406,7 @@ export function FinancesScreen() {
         ))}
       </BottomSheet>
 
-      <EntrySheet open={!!entry} kind={entry?.kind} item={entry?.item} activeSheet={expectedSheet} onClose={() => setEntry(null)} />
+      <EntrySheet open={!!entry} kind={entry?.kind} item={entry?.item} activeSheet={expectedSheet} moradores={moradores} onClose={() => setEntry(null)} />
       <RentDetailSheet residentRow={rentRow} sheetTitle={sheet} onClose={() => setRentRow(null)} />
     </Screen>
   );
@@ -369,6 +414,7 @@ export function FinancesScreen() {
 
 const styles = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  sectionHead: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 44 },
   rowBetween: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
   summary: { flexDirection: 'row' },
   summaryBox: { flex: 1 },

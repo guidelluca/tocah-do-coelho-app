@@ -26,11 +26,12 @@ function resizeOnWeb(uri, maxSize, quality) {
 /**
  * Abre câmera ou galeria e devolve um data URL JPEG já reduzido.
  * Retorna '' se o morador cancelar. Lança Error com mensagem amigável em pt-BR.
- * size: 'proof' (até 1080px) | 'avatar' (256px, recorte quadrado)
+ * size: 'proof' (até 900px) | 'avatar' (256px, recorte quadrado)
  */
 export async function pickPhoto({ source = 'library', size = 'proof' } = {}) {
-  const maxSize = size === 'avatar' ? 256 : 1080;
-  const quality = size === 'avatar' ? 0.8 : 0.6;
+  // Tamanhos pensados para caber bem na planilha (cada foto vira 2–3 células de 45 mil caracteres).
+  const maxSize = size === 'avatar' ? 256 : 900;
+  const quality = size === 'avatar' ? 0.75 : 0.55;
   if (Platform.OS !== 'web') {
     const permission = source === 'camera'
       ? await ImagePicker.requestCameraPermissionsAsync()
@@ -54,4 +55,27 @@ export async function pickPhoto({ source = 'library', size = 'proof' } = {}) {
   if (Platform.OS === 'web') return resizeOnWeb(asset.uri, maxSize, quality);
   if (!asset.base64) throw new Error('Não consegui ler a foto. Tenta de novo?');
   return `data:image/jpeg;base64,${asset.base64}`;
+}
+
+/**
+ * Converte uma foto antiga salva no aparelho (app anterior) em data URL pequena para subir na planilha.
+ * Retorna '' se a foto não existir mais (ex.: link temporário do navegador que expirou).
+ */
+export async function legacyUriToAvatar(uri) {
+  const raw = String(uri || '').trim();
+  if (!raw) return '';
+  try {
+    if (Platform.OS === 'web') return await resizeOnWeb(raw, 256, 0.8);
+    if (raw.startsWith('data:image/')) return raw.length < 280000 ? raw : '';
+    const blob = await (await fetch(raw)).blob();
+    const data = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ''));
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+    return data.startsWith('data:image/') && data.length < 280000 ? data : '';
+  } catch {
+    return '';
+  }
 }

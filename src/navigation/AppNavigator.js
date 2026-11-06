@@ -1,3 +1,4 @@
+import { View } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { FinancesScreen } from '../screens/FinancesScreen';
@@ -13,11 +14,20 @@ const Tab = createBottomTabNavigator();
 // Nomes das rotas ficam iguais (links/atalhos antigos); só o rótulo ganha acento.
 const TABS = {
   Inicio: { label: 'Início', icon: 'home-variant-outline', iconActive: 'home-variant' },
-  Financas: { label: 'Finanças', icon: 'cash-multiple', iconActive: 'cash-multiple' },
-  Tarefas: { label: 'Tarefas', icon: 'clipboard-check-outline', iconActive: 'clipboard-check' },
-  Nilde: { label: 'Nilde', icon: 'rabbit', iconActive: 'rabbit' },
-  Feed: { label: 'Feed', icon: 'message-text-outline', iconActive: 'message-text' },
+  Financas: { label: 'Finanças', icon: 'wallet-outline', iconActive: 'wallet' },
+  Tarefas: { label: 'Tarefas', icon: 'broom', iconActive: 'broom' },
+  Nilde: { label: 'Nilde', icon: 'rabbit-variant-outline', iconActive: 'rabbit-variant' },
+  Feed: { label: 'Feed', icon: 'forum-outline', iconActive: 'forum' },
 };
+
+/** Ícone com "pílula" atrás quando a aba está ativa (padrão Material 3). */
+function TabIcon({ name, color, focused, background }) {
+  return (
+    <View style={{ width: 56, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center', backgroundColor: focused ? background : 'transparent' }}>
+      <MaterialCommunityIcons name={name} size={22} color={color} />
+    </View>
+  );
+}
 
 export function AppNavigator() {
   const { colors, typography, layout, shadow } = useTheme();
@@ -38,10 +48,10 @@ export function AppNavigator() {
           paddingBottom: 8,
           ...shadow(2),
         },
-        tabBarActiveTintColor: colors.primary,
+        tabBarActiveTintColor: colors.onPrimarySoft,
         tabBarInactiveTintColor: colors.textMuted,
         tabBarLabelStyle: { ...typography.overline, textTransform: 'none', letterSpacing: 0, fontSize: 11 },
-        tabBarIcon: ({ color, focused }) => <MaterialCommunityIcons name={focused ? TABS[route.name].iconActive : TABS[route.name].icon} size={24} color={color} />,
+        tabBarIcon: ({ color, focused }) => <TabIcon name={focused ? TABS[route.name].iconActive : TABS[route.name].icon} color={color} focused={focused} background={colors.primarySoft} />,
       })}
     >
       <Tab.Screen name="Inicio" component={HomeScreen} />

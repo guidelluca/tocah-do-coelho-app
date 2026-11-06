@@ -96,3 +96,16 @@ test('acertos depois de uma linha apagada continuam aparecendo', () => {
   const snap = fin.parseFinanceSnapshot(rows.map((r) => r || []));
   assert.deepEqual(snap.acertosIndividuais.map((a) => a.quem), ['VITOR', 'RAMON']);
 });
+
+test('escala publicada pelo Apps Script (aba EscalaApp)', () => {
+  const rows = [
+    ['periodo', 'morador', 'tarefa', 'prazo', 'frequencia', 'descricao', 'extra', 'extraDescricao', 'atualizadoEm'],
+    ['02/11 até 08/11', 'ALLAN', 'QUINTAL + COELHA NILDE 🐰', 'DIÁRIO', 'Diária', 'Varrer', '', '', ''],
+    ['02/11 até 08/11', 'RAMON', 'COZINHA', 'DOMINGO', 'Semanal', 'Pia', 'BANHEIRÃO', 'Vaso', ''],
+  ];
+  const list = feed.parseEscalaApp(rows);
+  assert.equal(list.length, 2);
+  assert.equal(list[1].tarefa, 'Cozinha + Banheirão');
+  assert.ok(feed.isBanheiraoTask(list[1].tarefa));
+  assert.equal(list[0].tarefa, 'Quintal + Coelha Nilde 🐰');
+});

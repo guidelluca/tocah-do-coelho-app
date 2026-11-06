@@ -62,28 +62,40 @@ export function HomeScreen() {
   };
 
   return (
-    <Screen title="República Tocah" subtitle={`Olá, ${displayName(resident)} · ${monthLabel}`} onRefresh={refreshAll}>
-      {/* SEU MÊS */}
+    <Screen title="Início" subtitle={monthLabel} onRefresh={refreshAll}>
+      {/* FOTO DA CASA (logo abaixo do cabeçalho, como no app original) */}
+      <View style={[styles.hero, { borderRadius: radius.xl, marginBottom: spacing.md }]}>
+        <RemoteImage sources={HOUSE_SOURCES} fallback={LOCAL_HOUSE} style={StyleSheet.absoluteFill} accessibilityLabel="Foto da casa" />
+        <View style={[styles.heroOverlay, { backgroundColor: colors.imageScrim, padding: spacing.lg }]}>
+          <AppText variant="heading" color="onImage">República Tocah do Coelho</AppText>
+          {!!cfg.fraseHome && <AppText variant="caption" color="onImage">{cfg.fraseHome}</AppText>}
+        </View>
+      </View>
+
+      {/* SEU ALUGUEL */}
       {finance.loading ? (
         <SkeletonCard lines={3} />
       ) : (
         <Card onPress={myRow ? () => setRentRow(myRow) : undefined} accessibilityLabel="Ver composição do seu aluguel" style={{ marginBottom: spacing.md }}>
           <View style={styles.rowBetween}>
-            <AppText variant="overline" color="textMuted">Você paga em {monthLabel}</AppText>
-            <IconButton icon={valuesHidden ? 'eye-off-outline' : 'eye-outline'} onPress={toggleValuesHidden} accessibilityLabel={valuesHidden ? 'Mostrar valores' : 'Ocultar valores'} size={40} iconSize={20} />
+            <View style={{ flex: 1 }}>
+              <AppText variant="heading" color="primary">Seu aluguel</AppText>
+              <AppText variant="bodyStrong" color="textMuted">{monthLabel}</AppText>
+            </View>
+            <IconButton icon={valuesHidden ? 'eye-off-outline' : 'eye-outline'} onPress={toggleValuesHidden} accessibilityLabel={valuesHidden ? 'Mostrar valores' : 'Ocultar valores'} variant="primary" size={44} iconSize={20} />
           </View>
           {myRow ? (
-            <MoneyText value={myRow.total} variant="display" style={{ marginTop: -spacing.xs }} />
+            <MoneyText value={myRow.total} variant="display" color="primary" style={{ marginTop: spacing.sm }} />
           ) : (
-            <AppText variant="body" color="textMuted">Seu nome não está na aba {sheet || 'do mês'} da planilha.</AppText>
+            <AppText variant="body" color="textMuted" style={{ marginTop: spacing.sm }}>Seu nome não está na aba {sheet || 'do mês'} da planilha.</AppText>
           )}
           <View style={[styles.wrapRow, { gap: spacing.sm, marginTop: spacing.md }]}>
-            {!!due && <StatusPill icon="calendar-clock" label={due.label} tone={dueTone} />}
+            {!!due && <StatusPill icon="calendar-clock" label={due.label} tone={dueTone === 'neutral' ? 'danger' : dueTone} />}
             {fin.isActive === false && !!fin.mesReferencia && <StatusPill label="Mês antigo" tone="warning" />}
           </View>
           {!!myRow && (
             <View style={[styles.rowBetween, { marginTop: spacing.md }]}>
-              <AppText variant="captionStrong" color="primary">Ver composição</AppText>
+              <AppText variant="captionStrong" color="primary">Ver composição do aluguel</AppText>
               <Icon name="chevron-right" color="primary" size={18} />
             </View>
           )}
@@ -93,18 +105,30 @@ export function HomeScreen() {
       {/* SUA TAREFA */}
       <MyTaskCard />
 
-      {/* CAIXINHA + NILDE */}
-      <View style={[styles.actions, { gap: spacing.md, marginBottom: spacing.md }]}>
-        <Card variant="success" onPress={() => setCaixinhaOpen(true)} style={{ flex: 1 }} accessibilityLabel="Abrir caixinha">
-          <Icon name="piggy-bank-outline" color="onSuccessSoft" size={22} />
-          <AppText variant="captionStrong" color="onSuccessSoft" style={{ marginTop: spacing.sm }}>Caixinha</AppText>
-          {caixinha.loading ? <AppText variant="heading" color="onSuccessSoft">…</AppText> : <MoneyText value={caixinha.data?.saldo} variant="heading" color="onSuccessSoft" />}
-        </Card>
-        <Card variant="primary" onPress={() => navigation.navigate('Nilde')} style={{ flex: 1 }} accessibilityLabel="Abrir Nilde">
-          <Icon name="rabbit" color="onPrimarySoft" size={22} />
-          <AppText variant="captionStrong" color="onPrimarySoft" style={{ marginTop: spacing.sm }}>Nilde hoje</AppText>
-          <AppText variant="heading" color="onPrimarySoft">{nildeToday === null ? '…' : `${nildeToday}/3 refeições`}</AppText>
-        </Card>
+      {/* CAIXINHA (faixa verde, como antes) */}
+      <Card variant="success" onPress={() => setCaixinhaOpen(true)} accessibilityLabel="Abrir caixinha" style={{ marginBottom: spacing.md }}>
+        <View style={styles.rowBetween}>
+          <View style={{ flex: 1 }}>
+            <AppText variant="heading" color="onSuccessSoft">CAIXINHA</AppText>
+            <AppText variant="caption" color="onSuccessSoft">Toque para ver o extrato ou lançar</AppText>
+          </View>
+          {caixinha.loading ? <AppText variant="title" color="onSuccessSoft">…</AppText> : <MoneyText value={caixinha.data?.saldo} variant="title" color="onSuccessSoft" />}
+        </View>
+      </Card>
+
+      {/* ATALHOS */}
+      <View style={[styles.actions, { gap: spacing.sm, marginBottom: spacing.md }]}>
+        {[
+          { icon: 'cash-plus', label: 'Lançar gasto', onPress: () => navigation.navigate('Financas', { action: 'newExpense', at: Date.now() }) },
+          { icon: 'calendar-month-outline', label: 'Escala', onPress: () => navigation.navigate('Tarefas') },
+          { icon: 'rabbit-variant', label: nildeToday === null ? 'Nilde' : `Nilde ${nildeToday}/3`, onPress: () => navigation.navigate('Nilde') },
+          { icon: 'book-open-variant', label: 'Regras', onPress: () => setRulesOpen(true) },
+        ].map((a) => (
+          <PressableScale key={a.label} onPress={a.onPress} accessibilityLabel={a.label} style={[styles.shortcut, { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radius.lg, padding: spacing.sm }]}>
+            <Icon name={a.icon} color="primary" size={26} />
+            <AppText variant="captionStrong" color="primary" center numberOfLines={1}>{a.label.toUpperCase()}</AppText>
+          </PressableScale>
+        ))}
       </View>
 
       {/* ENTRE MORADORES */}
@@ -126,22 +150,8 @@ export function HomeScreen() {
         </Card>
       )}
 
-      {/* ATALHOS */}
-      <View style={[styles.actions, { gap: spacing.sm, marginBottom: spacing.sm }]}>
-        {[
-          { icon: 'cash-plus', label: 'Lançar gasto', onPress: () => navigation.navigate('Financas', { action: 'newExpense', at: Date.now() }) },
-          { icon: 'calendar-month-outline', label: 'Escala', onPress: () => navigation.navigate('Tarefas') },
-          { icon: 'book-open-variant', label: 'Regras', onPress: () => setRulesOpen(true) },
-        ].map((a) => (
-          <PressableScale key={a.label} onPress={a.onPress} accessibilityLabel={a.label} style={[styles.shortcut, { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radius.lg, padding: spacing.md }]}>
-            <Icon name={a.icon} color="primary" size={24} />
-            <AppText variant="captionStrong" center>{a.label}</AppText>
-          </PressableScale>
-        ))}
-      </View>
-
-      {/* A CASA */}
-      <SectionHeader title="A casa este mês" subtitle="Toque para ver o extrato de cada um" />
+      {/* PRÉVIA DOS ALUGUÉIS */}
+      <SectionHeader title="Prévia dos aluguéis" subtitle="Toque para ver o extrato de cada um" />
       <Card padding="md">
         {finance.loading && <AppText color="textMuted">Carregando…</AppText>}
         {(fin.residents || []).map((r, i) => (
@@ -166,15 +176,6 @@ export function HomeScreen() {
         )}
       </Card>
 
-      {/* FOTO DA CASA */}
-      <View style={[styles.hero, { borderRadius: radius.lg, marginTop: spacing.xl }]}>
-        <RemoteImage sources={HOUSE_SOURCES} fallback={LOCAL_HOUSE} style={StyleSheet.absoluteFill} accessibilityLabel="Foto da casa" />
-        <View style={[styles.heroOverlay, { backgroundColor: colors.imageScrim, padding: spacing.lg }]}>
-          <AppText variant="heading" color="onImage">República Tocah do Coelho</AppText>
-          {!!cfg.fraseHome && <AppText variant="caption" color="onImage" style={{ opacity: 0.9 }}>“{cfg.fraseHome}”</AppText>}
-        </View>
-      </View>
-
       <RentDetailSheet residentRow={rentRow} sheetTitle={sheet} onClose={() => setRentRow(null)} />
       <CaixinhaSheet visible={caixinhaOpen} onClose={() => setCaixinhaOpen(false)} saldo={caixinha.data?.saldo} />
       <BottomSheet visible={rulesOpen} onClose={() => setRulesOpen(false)} title="Regras da casa">
@@ -189,7 +190,7 @@ const styles = StyleSheet.create({
   rowBetween: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
   wrapRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center' },
   actions: { flexDirection: 'row', alignItems: 'stretch' },
-  shortcut: { flex: 1, alignItems: 'center', gap: 6, borderWidth: 1, minHeight: 76, justifyContent: 'center' },
-  hero: { height: 180, overflow: 'hidden', justifyContent: 'flex-end' },
+  shortcut: { flex: 1, alignItems: 'center', gap: 6, borderWidth: 1, minHeight: 84, justifyContent: 'center' },
+  hero: { height: 230, overflow: 'hidden', justifyContent: 'flex-end' },
   heroOverlay: { gap: 2 },
 });

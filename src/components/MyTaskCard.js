@@ -1,16 +1,18 @@
-import { Platform, StyleSheet, View } from 'react-native';
+import { useState } from 'react';
+import { Platform, Pressable, StyleSheet, View } from 'react-native';
 import { useResident } from '../context/ResidentContext';
 import { useTheme } from '../theme/ThemeContext';
 import { useMyTask } from '../data/hooks';
 import { useCompleteTask } from '../data/actions';
 import { formatWeekdayTime } from '../utils/date';
 import { FeedPhoto } from './FeedPhoto';
-import { AppText, Button, Card, IconButton, SkeletonCard, StatusPill } from './ui';
+import { AppText, Avatar, Button, Card, IconButton, SkeletonCard, StatusPill } from './ui';
 
 /** "Sua tarefa": usada na Home e em Tarefas. O status vem do check gravado no feed (vale para todo mundo, não some ao recarregar). */
 export function MyTaskCard({ style }) {
   const { resident } = useResident();
-  const { spacing, radius } = useTheme();
+  const { spacing, radius, colors } = useTheme();
+  const [open, setOpen] = useState(false);
   const task = useMyTask(resident);
   const { complete, busy } = useCompleteTask(resident);
   if (task.loading) return <SkeletonCard lines={2} />;
@@ -21,8 +23,29 @@ export function MyTaskCard({ style }) {
         <AppText variant="overline" color="textMuted">Sua tarefa da semana</AppText>
         <StatusPill label={t.concluida ? 'Feita' : 'Pendente'} tone={t.concluida ? 'success' : 'warning'} icon={t.concluida ? 'check' : 'clock-outline'} />
       </View>
-      <AppText variant="title" style={{ marginTop: spacing.xs }}>{t.tarefaNome || 'Sem tarefa na escala'}</AppText>
-      {!!t.descricao && !!t.tarefaNome && <AppText variant="caption" color="textMuted">{t.descricao}</AppText>}
+      <View style={[styles.row, { gap: spacing.md, marginTop: spacing.sm }]}>
+        <Avatar name={resident} size={48} ring={t.concluida ? 'success' : undefined} />
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <AppText variant="title">{t.tarefaNome || 'Sem tarefa na escala'}</AppText>
+          {!!(t.prazo || t.frequencia) && !!t.tarefaNome && (
+            <AppText variant="captionStrong" color="primary">{[t.prazo && `Até ${t.prazo.toLowerCase()}`, t.frequencia].filter(Boolean).join(' · ')}</AppText>
+          )}
+        </View>
+      </View>
+      {!!t.descricao && !!t.tarefaNome && (
+        <AppText variant="caption" color="textMuted" style={{ marginTop: spacing.sm }} numberOfLines={open ? undefined : 3}>{t.descricao}</AppText>
+      )}
+      {!!t.extra && (
+        <View style={{ marginTop: spacing.sm, padding: spacing.md, borderRadius: radius.md, backgroundColor: colors.dangerSoft }}>
+          <AppText variant="captionStrong" color="onDangerSoft">Extra da semana: {t.extra}</AppText>
+          {!!t.extraDescricao && <AppText variant="caption" color="onDangerSoft" numberOfLines={open ? undefined : 2}>{t.extraDescricao}</AppText>}
+        </View>
+      )}
+      {(String(t.descricao || '').length > 140 || !!t.extraDescricao) && (
+        <Pressable onPress={() => setOpen((v) => !v)} accessibilityRole="button" style={{ minHeight: 32, justifyContent: 'center' }}>
+          <AppText variant="captionStrong" color="primary">{open ? 'Mostrar menos' : 'Ver descrição completa'}</AppText>
+        </Pressable>
+      )}
       {t.concluida ? (
         <View style={[styles.row, { marginTop: spacing.md, gap: spacing.md }]}>
           {t.checkHasPhoto && !!t.checkTs && (

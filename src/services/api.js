@@ -264,6 +264,9 @@ export const deleteFinanceEntry = ({ entryType, rowIndex, expected, expectedShee
 export const toggleContaStatus = ({ rowIndex, status, expected, expectedSheet }) =>
   postAction('toggleContaStatus', { rowIndex, status: status ? 'TRUE' : 'FALSE', expected, expectedSheet });
 export const addCollectiveExpense = (data) => postAction('addCollectiveExpense', data);
+/** Gasto da casa (dividido igualmente entre todos): só uma linha em Gastos coletivos (J..M), sem acertos. */
+export const addHouseExpense = ({ payer, oQue, valor, obs = '' }) =>
+  postAction('addFinanceEntry', { entryType: 'gasto_coletivo', usuario: payer, payload: { quem: payer, oQue, quanto: valor, obs } });
 export const updateCollectiveExpense = (data) => postAction('updateCollectiveExpense', data);
 export const addSettlements = (data) => postAction('addSettlements', data);
 export const settleAcerto = (data) => postAction('settleAcerto', data);

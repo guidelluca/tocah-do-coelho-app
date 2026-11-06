@@ -114,7 +114,7 @@ export function TasksScreen() {
   };
 
   return (
-    <Screen title="Tarefas" subtitle={week ? `Semana de ${weekRangeLabel(week)}` : 'Escala da semana'} onRefresh={refresh}>
+    <Screen title="Tarefas" subtitle={week ? `Tarefas · ${weekRangeLabel(week)}` : 'Tarefas'} onRefresh={refresh}>
       <MyTaskCard />
 
       <Card style={{ marginBottom: spacing.md }}>
@@ -139,7 +139,7 @@ export function TasksScreen() {
                 title={me ? `${displayName(item.nome)} (você)` : displayName(item.nome)}
                 subtitle={
                   <View style={{ gap: 2 }}>
-                    <AppText variant="caption" color="textMuted" numberOfLines={1}>{item.tarefa}</AppText>
+                    <AppText variant="caption" color="textMuted" numberOfLines={2}>{item.tarefa}{item.prazo ? ` · até ${String(item.prazo).toLowerCase()}` : ''}</AppText>
                     <View style={[styles.row, { gap: spacing.xs, flexWrap: 'wrap' }]}>
                       <StatusPill label={item.concluida ? `Feita ${formatWeekdayTime(item.concluidaEm)}` : 'Pendente'} tone={item.concluida ? 'success' : 'neutral'} />
                       {casa.total > 0 && <StatusPill icon="star" label={`${casa.media.toFixed(1)} · ${casa.total} de ${EXPECTED}`} tone="warning" />}

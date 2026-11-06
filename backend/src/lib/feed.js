@@ -58,6 +58,48 @@ function defaultScale() {
   ];
 }
 
+const SMALL_WORDS = ['E', 'DA', 'DE', 'DO', 'DAS', 'DOS', 'A', 'O'];
+
+/** "SALA, CORREDOR E GARAGEM" -> "Sala, Corredor e Garagem" (mantém emoji). Textos já em caixa mista ficam como estão. */
+function niceTaskName(value) {
+  const raw = String(value || '').trim();
+  if (!raw || raw !== raw.toUpperCase()) return raw;
+  return raw
+    .toLowerCase()
+    .split(/(\s+)/)
+    .map((w, i) => (/^\s+$/.test(w) || (i > 0 && SMALL_WORDS.includes(w.toUpperCase())) ? w : w.charAt(0).toUpperCase() + w.slice(1)))
+    .join('');
+}
+
+/**
+ * Lê a aba EscalaApp publicada pelo Apps Script (BotTocah tarefas).
+ * Colunas: periodo | morador | tarefa | prazo | frequencia | descricao | extra | extraDescricao | atualizadoEm
+ */
+function parseEscalaApp(rows = []) {
+  const out = [];
+  rows.forEach((r, i) => {
+    if (i === 0 && norm(r[1]) === 'MORADOR') return;
+    const nome = canonicalResident(getCell(r, 1));
+    const area = getCell(r, 2);
+    if (!nome || !area) return;
+    const extra = getCell(r, 6);
+    const tarefaBase = niceTaskName(area);
+    out.push({
+      nome,
+      tarefa: extra ? `${tarefaBase} + ${niceTaskName(extra)}` : tarefaBase,
+      tarefaBase,
+      extra: niceTaskName(extra),
+      periodo: getCell(r, 0),
+      prazo: niceTaskName(getCell(r, 3)),
+      frequencia: getCell(r, 4),
+      descricao: getCell(r, 5),
+      extraDescricao: getCell(r, 7),
+      atualizadoEm: getCell(r, 8),
+    });
+  });
+  return out;
+}
+
 function isBanheiraoTask(task = '') {
   return norm(task).includes('BANHEIR');
 }
@@ -242,6 +284,8 @@ module.exports = {
   extractTaskForUser,
   defaultScale,
   isBanheiraoTask,
+  niceTaskName,
+  parseEscalaApp,
   parseFeedRows,
   itemWeek,
   itemWeekBySp,

@@ -158,7 +158,7 @@ export function IconButton({ icon, onPress, accessibilityLabel, variant = 'ghost
 
 /* ---------------- Chips e pills ---------------- */
 
-export function Chip({ label, selected, onPress, icon, count, style, accessibilityLabel }) {
+export function Chip({ label, selected, onPress, icon, left, count, style, accessibilityLabel }) {
   const { colors, radius, spacing, typography } = useTheme();
   return (
     <PressableScale
@@ -177,6 +177,7 @@ export function Chip({ label, selected, onPress, icon, count, style, accessibili
         style,
       ]}
     >
+      {left}
       {!!icon && <Icon name={icon} size={16} color={selected ? colors.onPrimary : colors.textMuted} />}
       <Text style={[typography.captionStrong, { color: selected ? colors.onPrimary : colors.text }]}>{label}</Text>
       {count !== undefined && <Text style={[typography.caption, { color: selected ? colors.onPrimary : colors.textMuted }]}>{count}</Text>}

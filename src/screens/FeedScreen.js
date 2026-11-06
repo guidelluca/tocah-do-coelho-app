@@ -273,7 +273,7 @@ export function FeedScreen() {
   const viewingOld = !!week && week !== data.currentWeek;
 
   return (
-    <Screen title="Feed da casa" subtitle={data.week ? `Semana de ${weekRangeLabel(data.week)}` : 'Atualizações da semana'} onRefresh={refresh}>
+    <Screen title="Feed" subtitle={data.week ? `Feed · ${weekRangeLabel(data.week)}` : 'Feed'} onRefresh={refresh}>
       {!viewingOld && <Composer onPosted={refresh} />}
       {viewingOld && (
         <Card variant="sunken" padding="md" style={{ marginBottom: spacing.md }}>
