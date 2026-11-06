@@ -1,6 +1,7 @@
 /**
  * BOT TOCAH — RODÍZIO DE TAREFAS
- * Email conjunto + Sidebar + Modo escuro no painel + Nilde + Banheirão independente
+ * E-mails e painéis no visual do app · escala publicada no app (aba EscalaApp)
+ * Lembretes pulam quem já marcou a tarefa no app (aba TarefasFeed)
  *
  * Se este projeto estiver no mesmo Apps Script que BotTocah-gastos-aluguel.gs, unifique onOpen()
  * em um único menu (não deixe duas funções onOpen).
@@ -19,6 +20,9 @@ function onOpen() {
   menu
       .addItem('📋 Abrir Painel de Ferramentas (Sidebar)', 'mostrarSidebarTarefas')
       .addItem('📅 VISUALIZAR ESCALA DO MÊS', 'mostrarPainelPrevisao')
+      .addItem('✅ Status da semana (quem já marcou no app)', 'mostrarStatusDaSemana')
+      .addItem('🔔 Plano de notificações', 'mostrarPainelNotificacoes')
+      .addItem('📱 Abrir o app da casa', 'abrirAppDaCasa')
       .addSeparator()
       .addItem('📢 Enviar para TODOS (Email Único)', 'rodizioTarefasTocah')
       .addSeparator();
@@ -41,6 +45,9 @@ function onOpen() {
       .addItem('📅 Ligar lembretes DIÁRIOS (Todo dia 8h)', 'configurarEnvioDiario')
       .addItem('🚫 Desligar lembretes DIÁRIOS', 'removerEnvioDiario')
       .addSeparator()
+      .addItem('⏰ Ligar lembrete de DOMINGO 18h (só quem falta)', 'configurarLembreteDomingo')
+      .addItem('🚫 Desligar lembrete de domingo', 'removerLembreteDomingo')
+      .addSeparator()
       .addItem('🚿 Enviar só Banheirão (separado)', 'rodizioBanheiraoTocah')
       .addItem('🚨 Lembrete Banheirão', 'lembreteBanheiraoTocah')
       .addSeparator()
@@ -60,76 +67,45 @@ function mostrarSidebarTarefas() {
 
 function getHtmlSidebar() {
   const moradores = getListaMoradores();
-  var botoesIndividuais = moradores.map(function (m) {
-    return '<button class="btn-individual" onclick="enviarPara(\'' + m.nome + '\')">📤 Enviar para ' + m.nome + '</button>';
+  const feitos = concluidasNoApp_();
+  const atribuicoes = getAtribuicoesSemana();
+  const feitosN = atribuicoes.filter(function (a) { return feitos[normNome_(a.morador.nome)]; }).length;
+  var botoesIndividuais = moradores.map(function (m, i) {
+    var cor = TOCAH_AVATAR[i % TOCAH_AVATAR.length];
+    var ok = feitos[normNome_(m.nome)];
+    return '<button onclick="run(this,\'enviarIndividualPorNome\',\'' + m.nome + '\',\'E-mail enviado para ' + m.nome + '\')">' +
+        '<span style="display:inline-flex;align-items:center;gap:10px;width:100%">' +
+        '<span class="av" style="width:28px;height:28px;font-size:13px;background:' + cor.bg + ';color:' + cor.fg + '">' + m.nome.charAt(0) + '</span>' +
+        '<span class="grow">' + m.nome.charAt(0) + m.nome.slice(1).toLowerCase() + '</span>' +
+        (ok ? '<span class="pill ok">✅</span>' : '<span class="pill wait">⏳</span>') + '</span></button>';
   }).join('');
 
-  return (
-      '<!DOCTYPE html>\n' +
-      '<html>\n' +
-      '<head>\n' +
-      '  <base target="_top">\n' +
-      '  <style>\n' +
-      "    body { font-family: 'Segoe UI', Tahoma, sans-serif; padding: 16px; margin: 0; background: #fafafa; }\n" +
-      '    h2 { color: #6f42c1; font-size: 16px; margin: 0 0 12px 0; border-bottom: 2px solid #e0e6ff; padding-bottom: 8px; }\n' +
-      '    .btn-geral {\n' +
-      '      width: 100%; padding: 14px; margin-bottom: 12px; font-size: 14px; font-weight: bold;\n' +
-      '      background: linear-gradient(135deg, #b041a3, #6f42c1); color: white; border: none;\n' +
-      '      border-radius: 12px; cursor: pointer; box-shadow: 0 4px 12px rgba(111,66,193,0.3);\n' +
-      '    }\n' +
-      '    .btn-geral:hover { opacity: 0.9; transform: translateY(-1px); }\n' +
-      '    .btn-individual {\n' +
-      '      width: 100%; padding: 10px 12px; margin-bottom: 8px; font-size: 13px;\n' +
-      '      background: #fff; color: #6f42c1; border: 2px solid #e0e6ff;\n' +
-      '      border-radius: 10px; cursor: pointer; text-align: left;\n' +
-      '    }\n' +
-      '    .btn-individual:hover { background: #f5f0ff; border-color: #6f42c1; }\n' +
-      '    .btn-rosa { color: #c2185b; border-color: #f8bbd9; }\n' +
-      '    .btn-rosa:hover { background: #fff0f5; border-color: #e91e63; }\n' +
-      '    .separador { margin: 16px 0 8px 0; font-size: 11px; color: #888; text-transform: uppercase; font-weight: bold;}\n' +
-      '    .status { font-size: 12px; color: #666; margin-top: 12px; padding: 8px; background: #f0f0f0; border-radius: 8px; }\n' +
-      '  </style>\n' +
-      '</head>\n' +
-      '<body>\n' +
-      '  <h2>📢 Visão Geral</h2>\n' +
-      '  <button class="btn-geral" style="background: linear-gradient(135deg, #2196F3, #3F51B5);" onclick="abrirPrevisao()">📅 Ver Escala do Mês</button>\n' +
-      '  <button class="btn-geral" onclick="enviarParaTodos()">📢 Enviar Email Único p/ TODOS</button>\n' +
-      '  <div class="separador">Avançar Manualmente</div>\n' +
-      '  <button class="btn-individual" onclick="rotacionarGeral()">🔄 Pular Rodízio Geral</button>\n' +
-      '  <button class="btn-individual btn-rosa" onclick="rotacionarBanheirao()">🚿 Pular SÓ Banheirão</button>\n' +
-      '  <div class="separador">Envio Unitário</div>\n' +
-      botoesIndividuais +
-      '  <div class="separador">Automações & Extras</div>\n' +
-      '  <button class="btn-individual" onclick="ativarAutomatico()">⏰ Ligar Automático (Seg 8h)</button>\n' +
-      '  <button class="btn-individual" onclick="ativarDiario()">📅 Ligar Lembrete Diário (Todo dia)</button>\n' +
-      '  <button class="btn-individual" onclick="lembreteMulta()">🚨 Lembrete Multa (Geral)</button>\n' +
-      '  <div id="status" class="status" style="display:none;"></div>\n' +
-      '  <script>\n' +
-      "    function mostrarStatus(msg) {\n" +
-      "      var el = document.getElementById('status');\n" +
-      '      el.textContent = msg;\n' +
-      "      el.style.display = 'block';\n" +
-      '      setTimeout(function() { el.style.display = \'none\'; }, 5000);\n' +
-      '    }\n' +
-      '    function abrirPrevisao() { google.script.run.mostrarPainelPrevisao(); }\n' +
-      "    function enviarParaTodos() { google.script.run.withSuccessHandler(function(){ mostrarStatus('✅ Enviado!'); }).withFailureHandler(function(e){ mostrarStatus('❌ ' + e.message); }).rodizioTarefasTocah(); }\n" +
-      "    function enviarPara(nome) { google.script.run.withSuccessHandler(function(){ mostrarStatus('✅ Enviado!'); }).withFailureHandler(function(e){ mostrarStatus('❌ ' + e.message); }).enviarIndividualPorNome(nome); }\n" +
-      "    function lembreteMulta() { google.script.run.withSuccessHandler(function(){ mostrarStatus('✅ Lembrete enviado!'); }).withFailureHandler(function(e){ mostrarStatus('❌ ' + e.message); }).lembreteUltimoDiaTocah(); }\n" +
-      '    function rotacionarGeral() {\n' +
-      "      if(confirm('Avançar a escala geral em 1 semana?')) {\n" +
-      "        google.script.run.withSuccessHandler(function(){ mostrarStatus('✅ Rodízio geral avançado!'); }).withFailureHandler(function(e){ mostrarStatus('❌ ' + e.message); }).avancarRodizioManualmente();\n" +
-      '      }\n' +
-      '    }\n' +
-      '    function rotacionarBanheirao() {\n' +
-      "      if(confirm('Avançar APENAS o banheirão para a próxima pessoa?')) {\n" +
-      "        google.script.run.withSuccessHandler(function(){ mostrarStatus('✅ Banheirão avançado!'); }).withFailureHandler(function(e){ mostrarStatus('❌ ' + e.message); }).avancarBanheiraoManualmente();\n" +
-      '      }\n' +
-      '    }\n' +
-      "    function ativarAutomatico() { google.script.run.withSuccessHandler(function(){ mostrarStatus('✅ Semanal Ativado!'); }).withFailureHandler(function(e){ mostrarStatus('❌ ' + e.message); }).configurarEnvioAutomaticoSegunda(); }\n" +
-      "    function ativarDiario() { google.script.run.withSuccessHandler(function(){ mostrarStatus('✅ Diários Ativados!'); }).withFailureHandler(function(e){ mostrarStatus('❌ ' + e.message); }).configurarEnvioDiario(); }\n" +
-      '  </script>\n' +
-      '</body>\n' +
-      '</html>'
+  return htmlPainelDoc_(
+      '<div class="hero"><div class="ov light">Tarefas da casa</div><div class="h1">Ferramentas Tocah</div>' +
+      '<div class="sub">' + String(getPeriodoValidade()).replace('🗓️ ', '') + ' · ' + feitosN + '/' + atribuicoes.length + ' feitas no app</div></div>' +
+      '<button class="primary" onclick="run(this,\'rodizioTarefasTocah\',null,\'Escala enviada pra todos!\')">📢 Enviar escala pra todos</button>' +
+      '<button class="soft" onclick="google.script.run.mostrarStatusDaSemana()">✅ Status da semana</button>' +
+      '<button class="soft" onclick="google.script.run.mostrarPainelPrevisao()">📅 Escala das próximas 4 semanas</button>' +
+      '<button class="soft" onclick="window.open(\'' + APP_URL + '\',\'_blank\')">📱 Abrir o app da casa</button>' +
+      '<div class="sec" style="margin-top:14px">Enviar só para</div>' + botoesIndividuais +
+      '<div class="sec" style="margin-top:14px">Rodízio</div>' +
+      '<button onclick="if(confirm(\'Avançar a escala geral em 1 semana?\'))run(this,\'avancarRodizioManualmente\',null,\'Rodízio avançado! O app já foi atualizado.\')">🔄 Pular rodízio geral</button>' +
+      '<button class="danger" onclick="if(confirm(\'Avançar só o banheirão pra próxima pessoa?\'))run(this,\'avancarBanheiraoManualmente\',null,\'Banheirão avançado!\')">🚿 Pular só o banheirão</button>' +
+      '<div class="sec" style="margin-top:14px">Lembretes</div>' +
+      '<button onclick="run(this,\'lembreteUltimoDiaTocah\',null,\'Lembrete de multa enviado!\')">🚨 Lembrete de multa (geral)</button>' +
+      '<button onclick="run(this,\'lembreteDomingoPendentes\',null,\'Lembrete enviado só pra quem falta!\')">⏰ Lembrar só quem falta marcar</button>' +
+      '<div class="sec" style="margin-top:14px">Automações</div>' +
+      '<button onclick="run(this,\'configurarEnvioAutomaticoSegunda\',null,\'Envio de segunda ligado!\')">⏰ Ligar envio de segunda (8h)</button>' +
+      '<button onclick="run(this,\'configurarEnvioDiario\',null,\'Lembretes diários ligados!\')">📅 Ligar lembretes diários (8h)</button>' +
+      '<button onclick="run(this,\'configurarLembreteDomingo\',null,\'Lembrete de domingo ligado!\')">🔔 Ligar lembrete de domingo (18h)</button>' +
+      '<button onclick="run(this,\'instalarGatilhoEscalaApp\',null,\'Atualização automática do app ligada!\')">📱 Ligar atualização do app</button>' +
+      '<button class="soft" onclick="google.script.run.mostrarPainelNotificacoes()">🔔 Ver plano de notificações</button>' +
+      '<div id="status" role="status"></div>' +
+      '<script>' +
+      'function msg(t,err){var el=document.getElementById("status");el.textContent=t;el.className=err?"err":"";el.style.display="block";clearTimeout(window._t);window._t=setTimeout(function(){el.style.display="none"},5000);}' +
+      'function run(btn,fn,arg,ok){btn.disabled=true;var r=google.script.run.withSuccessHandler(function(){btn.disabled=false;msg("✅ "+ok)}).withFailureHandler(function(e){btn.disabled=false;msg("❌ "+(e&&e.message||e),true)});' +
+      'arg===null?r[fn]():r[fn](arg);}' +
+      '</script>'
   );
 }
 
@@ -361,8 +337,9 @@ function executarEnvioGeral(isLembrete, silencioso) {
   const tarefaBanheirao = getTarefaBanheirao();
   const emoji = isLembrete ? '🚨' : '📋';
 
-  const htmlBody = montarHtmlEmailUnico(atribuicoes, isLembrete, banheiraoResp, tarefaBanheirao);
-  const assunto = emoji + ' Escala Tocah - Tarefas da Semana';
+  const status = isLembrete ? concluidasNoApp_() : null;
+  const htmlBody = montarHtmlEmailUnico(atribuicoes, isLembrete, banheiraoResp, tarefaBanheirao, status);
+  const assunto = emoji + (isLembrete ? ' Escala Tocah · fechamento da semana' : ' Escala Tocah · tarefas da semana');
   const todosEmails = atribuicoes
       .map(function (a) {
         return a.morador.email;
@@ -370,6 +347,7 @@ function executarEnvioGeral(isLembrete, silencioso) {
       .join(', ');
 
   MailApp.sendEmail({ to: todosEmails, subject: assunto, htmlBody: htmlBody });
+  registrarLog(isLembrete ? 'Lembrete de multa' : 'Escala da semana', 'Enviado para todos');
 
   atribuicoes.forEach(function (a) {
     atualizarLinkWhatsTarefa(a.morador, a.tarefa, isLembrete, abaWhats, dadosAba);
@@ -388,15 +366,12 @@ function executarEnvioGeral(isLembrete, silencioso) {
 function atualizarLinkWhatsTarefa(morador, tarefa, isLembrete, aba, dadosAba) {
   if (!aba) return;
   const textoWhats =
-      (isLembrete ? '🚨' : '📋') +
-      ' *ESCALA TOCAH* \n\n' +
-      morador.nome +
-      ', sua tarefa:\n📍 ' +
-      tarefa.area +
-      '\n⏰ ' +
-      tarefa.prazo +
-      '\n📝 ' +
-      tarefa.desc.replace(/<[^>]+>/g, '');
+      (isLembrete ? '🚨 *Fechamento da semana · Tocah*' : '📋 *Escala da semana · Tocah*') +
+      '\n\nOi, ' + morador.nome.charAt(0) + morador.nome.slice(1).toLowerCase() + '! Sua tarefa:' +
+      '\n📍 *' + nomeBonitoTarefa_(tarefa.area) + '*' +
+      '\n⏰ ' + prazoBonito_(tarefa.prazo) + ' · ' + tarefa.freq +
+      '\n\n📝 ' + limparHtmlEscala_(tarefa.desc) +
+      '\n\n✅ Quando terminar, marque no app: ' + APP_URL;
   const linkWhats = 'https://api.whatsapp.com/send?phone=' + morador.tel + '&text=' + encodeURIComponent(textoWhats);
   for (var j = 1; j < dadosAba.length; j++) {
     if (dadosAba[j][0] && dadosAba[j][0].toString().toUpperCase().indexOf(morador.nome) !== -1) {
@@ -409,13 +384,11 @@ function atualizarLinkWhatsTarefa(morador, tarefa, isLembrete, aba, dadosAba) {
 function atualizarLinkWhatsBanheirao(morador, tarefa, isLembrete, aba, dadosAba) {
   if (!aba) return;
   const textoWhats =
-      (isLembrete ? '🚨' : '🚿') +
-      ' *BANHEIRÃO TOCAH*\n\n' +
-      morador.nome +
-      ', você está no banheirão!\n📍 ' +
-      tarefa.area +
-      '\n⏰ ' +
-      tarefa.prazo;
+      (isLembrete ? '🚨 *Banheirão · último aviso*' : '🚿 *Banheirão da semana · Tocah*') +
+      '\n\n' + morador.nome.charAt(0) + morador.nome.slice(1).toLowerCase() + ', o banheirão é seu nesta semana!' +
+      '\n⏰ ' + prazoBonito_(tarefa.prazo) +
+      '\n📝 ' + limparHtmlEscala_(tarefa.desc) +
+      '\n\nApp da casa: ' + APP_URL;
   const linkWhats = 'https://api.whatsapp.com/send?phone=' + morador.tel + '&text=' + encodeURIComponent(textoWhats);
   for (var k = 1; k < dadosAba.length; k++) {
     if (dadosAba[k][0] && dadosAba[k][0].toString().toUpperCase().indexOf(morador.nome) !== -1) {
@@ -431,12 +404,14 @@ function executarEnvioIndividual(isLembrete, nomeEspecifico) {
     return m.nome === nomeEspecifico;
   });
   if (!morador) {
-    SpreadsheetApp.getUi().alert('❌ Morador não encontrado!');
-    return;
+    try { SpreadsheetApp.getUi().alert('❌ Morador não encontrado!'); } catch (e) {}
+    throw new Error('Morador não encontrado: ' + nomeEspecifico);
   }
-  const htmlBody = montarHtmlEmailUnico(atribuicoes, isLembrete, getBanheiraoSemana(), getTarefaBanheirao());
-  MailApp.sendEmail({ to: morador.email, subject: '📋 Escala Tocah - Tarefas', htmlBody: htmlBody });
-  SpreadsheetApp.getUi().alert('✅ E-mail enviado para ' + nomeEspecifico);
+  const status = isLembrete ? concluidasNoApp_() : null;
+  const htmlBody = montarHtmlEmailUnico(atribuicoes, isLembrete, getBanheiraoSemana(), getTarefaBanheirao(), status);
+  MailApp.sendEmail({ to: morador.email, subject: '📋 Escala Tocah · tarefas da semana', htmlBody: htmlBody });
+  registrarLog('Escala individual', 'Enviado para ' + nomeEspecifico);
+  try { SpreadsheetApp.getUi().alert('✅ E-mail enviado para ' + nomeEspecifico); } catch (e) {}
 }
 
 function enviarIndividual_ALLAN() {
@@ -504,22 +479,31 @@ function enviarNotificacoesDiarias() {
   const atribuicoes = getAtribuicoesSemana();
   const banheiraoResp = getBanheiraoSemana();
   const tarefaBanheirao = getTarefaBanheirao();
+  const feitos = concluidasNoApp_();
 
-  atribuicoes.forEach(function (a) {
-    var descExtra = '';
-
-    if (banheiraoResp && a.morador.nome === banheiraoResp.nome) {
-      descExtra = htmlEmailExtraBanheirao(tarefaBanheirao);
-    }
-
-    var htmlBody = montarHtmlLembreteDiario(a.morador.nome, a.tarefa.area, a.tarefa.freq, a.tarefa.desc, descExtra, a.tarefa.prazo);
-
-    MailApp.sendEmail({
-      to: a.morador.email,
-      subject: 'Lembrete do dia · Tocah 🐰',
-      htmlBody: htmlBody,
-    });
+  // Segunda já tem o e-mail da escala às 8h: não manda o diário junto.
+  const ehSegunda = Utilities.formatDate(new Date(), 'America/Sao_Paulo', 'u') === '1';
+  const temSemanal = ScriptApp.getProjectTriggers().some(function (t) {
+    return t.getHandlerFunction() === 'enviarEscalaAutomaticaSegunda';
   });
+  if (ehSegunda && temSemanal) {
+    registrarLog('Lembretes diários', 'Pulado: segunda já tem o e-mail da escala.');
+    return;
+  }
+
+  var enviados = [];
+  var pulados = [];
+  atribuicoes.forEach(function (a) {
+    if (feitos[normNome_(a.morador.nome)] && !tarefaDiaria_(a.tarefa)) {
+      pulados.push(a.morador.nome);
+      return;
+    }
+    var descExtra = banheiraoResp && a.morador.nome === banheiraoResp.nome ? htmlEmailExtraBanheirao(tarefaBanheirao) : '';
+    var htmlBody = montarHtmlLembreteDiario(a.morador.nome, a.tarefa.area, a.tarefa.freq, a.tarefa.desc, descExtra, a.tarefa.prazo);
+    MailApp.sendEmail({ to: a.morador.email, subject: 'Lembrete do dia · Tocah 🐰', htmlBody: htmlBody });
+    enviados.push(a.morador.nome);
+  });
+  registrarLog('Lembretes diários', 'Enviados: ' + (enviados.join(', ') || '—') + (pulados.length ? ' · Já feitos no app: ' + pulados.join(', ') : ''));
 }
 
 function mostrarPainelPrevisao() {
@@ -532,91 +516,22 @@ function mostrarPainelPrevisao() {
 }
 
 function getHtmlPrevisaoMes() {
-  var blocosSemanas = '';
-
+  var blocos = '';
   for (var w = 0; w < 4; w++) {
-    var periodo = getPeriodoValidade(w);
+    var periodo = String(getPeriodoValidade(w)).replace('🗓️ ', '');
     var atribuicoes = getAtribuicoesSemana(w);
     var banheirao = getBanheiraoSemana(w);
-    var isAtual = w === 0 ? '<span class="badge-atual">SEMANA ATUAL</span>' : '';
-
-    var cardsTarefas = '';
-    atribuicoes.forEach(function (a) {
-      var areaResumida = a.tarefa.area.split(' ')[0];
-      if (a.tarefa.area.indexOf('NILDE') !== -1) areaResumida = 'QUINTAL + NILDE 🐰';
-      if (a.tarefa.area.indexOf('SALA') !== -1) areaResumida = 'SALA E GARAGEM';
-
-      cardsTarefas +=
-          '<div class="task-card">' +
-          '<div class="task-name">' +
-          a.morador.nome +
-          '</div>' +
-          '<div class="task-area">' +
-          areaResumida +
-          '</div>' +
-          '</div>';
-    });
-
-    if (banheirao) {
-      cardsTarefas +=
-          '<div class="task-card banheirao-card">' +
-          '<div class="task-name">' +
-          banheirao.nome +
-          '</div>' +
-          '<div class="task-area">BANHEIRÃO 🚿</div>' +
-          '</div>';
-    }
-
-    blocosSemanas +=
-        '<div class="week-container">' +
-        '<div class="week-header">' +
-        '<div>' +
-        periodo +
-        ' ' +
-        isAtual +
-        '</div>' +
-        '</div>' +
-        '<div class="grid-tasks">' +
-        cardsTarefas +
-        '</div>' +
-        '</div>';
+    var tiles = atribuicoes.map(function (a) {
+      return '<div class="tile"><div class="ov">' + a.morador.nome + '</div><div class="tt">' + nomeBonitoTarefa_(a.tarefa.area) + '</div></div>';
+    }).join('');
+    if (banheirao) tiles += '<div class="tile b"><div class="ov">' + banheirao.nome + '</div><div class="tt">🚿 Banheirão</div></div>';
+    blocos += '<div class="card"><div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">' +
+        '<div class="tt" style="font-size:15px">' + periodo + '</div>' + (w === 0 ? '<span class="pill pp">Semana atual</span>' : '') +
+        '</div><div class="grid">' + tiles + '</div></div>';
   }
-
-  return (
-      '<!DOCTYPE html>\n' +
-      '<html>\n' +
-      '<head>\n' +
-      '  <style>\n' +
-      "      body { font-family: 'Segoe UI', Tahoma, sans-serif; background: #f4f2f7; margin: 0; padding: 20px; color: #333; }\n" +
-      '      .header-title { text-align: center; color: #4a148c; margin-bottom: 24px; font-size: 22px; font-weight: bold; }\n' +
-      '      .week-container { background: #fff; border-radius: 16px; padding: 20px; margin-bottom: 24px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); border: 1px solid #e8e4f0; }\n' +
-      '      .week-header { font-size: 16px; font-weight: bold; color: #6f42c1; margin-bottom: 16px; display: flex; align-items: center; gap: 10px; border-bottom: 2px solid #f4f2f7; padding-bottom: 10px; }\n' +
-      '      .badge-atual { background: #4caf50; color: white; padding: 4px 8px; border-radius: 12px; font-size: 10px; font-weight: bold; letter-spacing: 1px; }\n' +
-      '      .grid-tasks { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px; }\n' +
-      '      .task-card { background: #fafafa; border-left: 4px solid #6f42c1; padding: 12px; border-radius: 8px; border-top: 1px solid #eee; border-right: 1px solid #eee; border-bottom: 1px solid #eee; }\n' +
-      '      .banheirao-card { border-left: 4px solid #e91e63; background: #fff0f5; }\n' +
-      '      .task-name { font-weight: bold; font-size: 15px; margin-bottom: 4px; color: #2d2d2d; }\n' +
-      '      .task-area { font-size: 12px; color: #666; font-weight: 600; text-transform: uppercase; }\n' +
-      '      .banheirao-card .task-area { color: #c2185b; }\n' +
-      '      @media (prefers-color-scheme: dark) {\n' +
-      '        body { background: #121212; color: #eee; }\n' +
-      '        .header-title { color: #bb86fc; }\n' +
-      '        .week-container { background: #1e1e1e; border-color: #333; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }\n' +
-      '        .week-header { color: #bb86fc; border-color: #333; }\n' +
-      '        .task-card { background: #252525; border-color: #333; border-left-color: #bb86fc; }\n' +
-      '        .banheirao-card { background: #2c1a1f; border-left-color: #ff80ab; }\n' +
-      '        .task-name { color: #fff; }\n' +
-      '        .task-area { color: #aaa; }\n' +
-      '        .banheirao-card .task-area { color: #ff80ab; }\n' +
-      '      }\n' +
-      '    </style>\n' +
-      '</head>\n' +
-      '<body>\n' +
-      '    <div class="header-title">📋 Plano de Organização (Próximas 4 Semanas)</div>\n' +
-      blocosSemanas +
-      '</body>\n' +
-      '</html>'
-  );
+  return htmlPainelDoc_(
+      '<div class="hero"><div class="ov light">Planejamento</div><div class="h1">Próximas 4 semanas</div>' +
+      '<div class="sub">A semana atual é a mesma que aparece no app.</div></div>' + blocos);
 }
 
 function atualizarAbaPainelMes() {
@@ -643,7 +558,7 @@ function atualizarAbaPainelMes() {
       .setValue('🐰 REPÚBLICA TOCAH - PREVISÃO DE 4 SEMANAS')
       .setHorizontalAlignment('center')
       .setVerticalAlignment('middle')
-      .setBackground('#4a148c')
+      .setBackground('#4A148C')
       .setFontColor('white')
       .setFontSize(16)
       .setFontWeight('bold');
@@ -661,7 +576,7 @@ function atualizarAbaPainelMes() {
   aba
       .getRange('A2:G2')
       .setValues([headers])
-      .setBackground('#6f42c1')
+      .setBackground('#6A1B9A')
       .setFontColor('white')
       .setFontWeight('bold')
       .setHorizontalAlignment('center')
@@ -694,8 +609,8 @@ function atualizarAbaPainelMes() {
 
     rowData.push([periodo, pCozinha, pSala, pQuintal, pLavanderia, pLixo, pBanheirao]);
 
-    var corLinha = w === 0 ? '#f3e5f5' : w % 2 === 0 ? '#fafafa' : '#ffffff';
-    bgColors.push([corLinha, corLinha, corLinha, corLinha, corLinha, corLinha, '#fff0f5']);
+    var corLinha = w === 0 ? '#F2E7F9' : w % 2 === 0 ? '#F6F4FA' : '#FFFFFF';
+    bgColors.push([corLinha, corLinha, corLinha, corLinha, corLinha, corLinha, '#FBE6E8']);
   }
 
   var dataRange = aba.getRange(3, 1, rowData.length, 7); // antes era 6 fixo e dava erro com 4 linhas
@@ -707,9 +622,9 @@ function atualizarAbaPainelMes() {
     aba.setRowHeight(r, 45);
   }
 
-  aba.getRange('A1:G6').setBorder(true, true, true, true, true, true, '#d1c4e9', SpreadsheetApp.BorderStyle.SOLID);
-  aba.getRange('A3:A6').setFontWeight('bold').setFontColor('#4a148c');
-  aba.getRange('G2:G6').setFontColor('#c2185b').setFontWeight('bold');
+  aba.getRange('A1:G6').setBorder(true, true, true, true, true, true, '#E7E2EF', SpreadsheetApp.BorderStyle.SOLID);
+  aba.getRange('A3:A6').setFontWeight('bold').setFontColor('#4A148C');
+  aba.getRange('G3:G6').setFontColor('#951E28').setFontWeight('bold');
 
   aba.setHiddenGridlines(true);
   aba.setFrozenRows(2);
@@ -758,119 +673,46 @@ function mostrarPainelNotificacoes() {
 
 function getHtmlPlanoNotificacoes() {
   const triggers = ScriptApp.getProjectTriggers();
-  const temSemanal = triggers.some(function (t) {
-    return t.getHandlerFunction() === 'enviarEscalaAutomaticaSegunda';
-  });
-  const temDiario = triggers.some(function (t) {
-    return t.getHandlerFunction() === 'enviarNotificacoesDiarias';
-  });
+  function tem(fn) { return triggers.some(function (t) { return t.getHandlerFunction() === fn; }); }
+  const temSemanal = tem('enviarEscalaAutomaticaSegunda');
+  const temDiario = tem('enviarNotificacoesDiarias');
+  const temDomingo = tem('lembreteDomingoPendentes');
+  const temApp = tem('publicarEscalaParaApp');
 
-  const hoje = new Date();
-  const diaSemana = hoje.getDay();
-  const distSegunda = diaSemana === 0 ? 6 : diaSemana - 1;
+  const tz = 'America/Sao_Paulo';
+  const agora = new Date();
+  const ini = inicioSemanaSP_();
+  const hojeKey = Utilities.formatDate(agora, tz, 'yyyy-MM-dd');
+  const horaAgora = Number(Utilities.formatDate(agora, tz, 'H'));
+  const nomes = ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado', 'Domingo'];
 
-  var htmlLinhas = '';
-  const nomesDias = [
-    'Segunda-feira',
-    'Terça-feira',
-    'Quarta-feira',
-    'Quinta-feira',
-    'Sexta-feira',
-    'Sábado',
-    'Domingo',
-  ];
-
-  for (var i = 0; i < 7; i++) {
-    var dataDia = new Date(hoje);
-    dataDia.setDate(hoje.getDate() - distSegunda + i);
-
-    var formatada = Utilities.formatDate(dataDia, Session.getScriptTimeZone(), 'dd/MM');
-    var statusSemanal = '<span style="color:#aaa;">-</span>';
-    var statusDiario = '<span style="color:#aaa;">-</span>';
-
-    var isPassado = false;
-    var diaAmeiaNoite = new Date(dataDia).setHours(0, 0, 0, 0);
-    var hojeAmeiaNoite = new Date(hoje).setHours(0, 0, 0, 0);
-
-    if (diaAmeiaNoite < hojeAmeiaNoite) {
-      isPassado = true;
-    } else if (diaAmeiaNoite === hojeAmeiaNoite && hoje.getHours() >= 8) {
-      isPassado = true;
-    }
-
-    const tagEnviado =
-        '<span style="background:#e8f5e9; color:#2e7d32; padding:4px 8px; border-radius:12px; font-size:12px; font-weight:bold;">✅ ENVIADO</span>';
-    const tagAgendado =
-        '<span style="background:#fff3e0; color:#e65100; padding:4px 8px; border-radius:12px; font-size:12px; font-weight:bold;">⏳ AGENDADO (8h)</span>';
-    const tagInativo =
-        '<span style="background:#ffebee; color:#c62828; padding:4px 8px; border-radius:12px; font-size:12px; font-weight:bold;">🚫 DESATIVADO</span>';
-
-    if (i === 0) {
-      statusSemanal = temSemanal ? (isPassado ? tagEnviado : tagAgendado) : tagInativo;
-    }
-
-    statusDiario = temDiario ? (isPassado ? tagEnviado : tagAgendado) : tagInativo;
-
-    var corFundo = diaAmeiaNoite === hojeAmeiaNoite ? '#f3e5f5' : '#ffffff';
-    var destaqueHoje = diaAmeiaNoite === hojeAmeiaNoite ? '<br><small style="color:#6f42c1; font-weight:bold;">(HOJE)</small>' : '';
-
-    htmlLinhas +=
-        '<tr style="background-color: ' +
-        corFundo +
-        ';">' +
-        '<td style="padding: 14px; border-bottom: 1px solid #eee; font-weight: bold; color: #444;">' +
-        nomesDias[i] +
-        ' - ' +
-        formatada +
-        ' ' +
-        destaqueHoje +
-        '</td>' +
-        '<td style="padding: 14px; border-bottom: 1px solid #eee; text-align: center;">' +
-        statusSemanal +
-        '</td>' +
-        '<td style="padding: 14px; border-bottom: 1px solid #eee; text-align: center;">' +
-        statusDiario +
-        '</td>' +
-        '</tr>';
+  function tag(ativo, passou, hora) {
+    if (!ativo) return '<span class="pill off">Desligado</span>';
+    return passou ? '<span class="pill ok">Enviado</span>' : '<span class="pill wait">' + hora + '</span>';
   }
 
-  return (
-      '<!DOCTYPE html>\n' +
-      '<html>\n' +
-      '<head>\n' +
-      '    <style>\n' +
-      "      body { font-family: 'Segoe UI', sans-serif; background: #f4f2f7; padding: 20px; color: #333; margin: 0; }\n" +
-      '      .card { background: #fff; border-radius: 16px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); overflow: hidden; }\n' +
-      '      .header { background: #4a148c; color: white; padding: 20px; text-align: center; }\n' +
-      '      table { width: 100%; border-collapse: collapse; }\n' +
-      '      th { background: #fafafa; padding: 15px; text-align: center; font-size: 13px; color: #6f42c1; text-transform: uppercase; border-bottom: 2px solid #eee; }\n' +
-      '      td { font-size: 14px; }\n' +
-      '    </style>\n' +
-      '</head>\n' +
-      '<body>\n' +
-      '    <div class="card">\n' +
-      '      <div class="header">\n' +
-      '        <h2 style="margin:0; font-size: 20px;">🔔 Acompanhamento da Semana</h2>\n' +
-      '        <p style="margin:5px 0 0 0; font-size: 13px; color:#d1c4e9;">Abaixo estão os disparos programados pelo Bot</p>\n' +
-      '      </div>\n' +
-      '      <table>\n' +
-      '        <thead>\n' +
-      '          <tr>\n' +
-      '            <th style="text-align: left;">DIA DA SEMANA</th>\n' +
-      '            <th>EMAIL GERAL DA ESCALA</th>\n' +
-      '            <th>LEMBRETES DIÁRIOS</th>\n' +
-      '          </tr>\n' +
-      '        </thead>\n' +
-      '        <tbody>\n' +
-      htmlLinhas +
-      '        </tbody>\n' +
-      '      </table>\n' +
-      '    </div>\n' +
-      '</body>\n' +
-      '</html>'
+  var linhas = '';
+  for (var i = 0; i < 7; i++) {
+    var dia = new Date(ini.getTime() + i * 86400000 + 12 * 3600000);
+    var key = Utilities.formatDate(dia, tz, 'yyyy-MM-dd');
+    var passouDia = key < hojeKey;
+    var ehHoje = key === hojeKey;
+    var semanal = i === 0 ? tag(temSemanal, passouDia || (ehHoje && horaAgora >= 8), '8h') : '<span class="muted">—</span>';
+    var diario = i === 0 && temSemanal ? '<span class="muted">no e-mail de segunda</span>' : tag(temDiario, passouDia || (ehHoje && horaAgora >= 8), '8h');
+    var domingo = i === 6 ? tag(temDomingo, passouDia || (ehHoje && horaAgora >= 18), '18h') : '<span class="muted">—</span>';
+    linhas += '<tr' + (ehHoje ? ' class="today"' : '') + '><td><b style="font-weight:900">' + nomes[i] + '</b> ' +
+        Utilities.formatDate(dia, tz, 'dd/MM') + (ehHoje ? ' <span class="pill pp">Hoje</span>' : '') + '</td>' +
+        '<td>' + semanal + '</td><td>' + diario + '</td><td>' + domingo + '</td></tr>';
+  }
+
+  return htmlPainelDoc_(
+      '<div class="hero"><div class="ov light">Automações</div><div class="h1">Plano de notificações</div>' +
+      '<div class="sub">Atualização do app: ' + (temApp ? 'ligada (seg 1h + todo dia 7h)' : 'desligada — ligue pelo menu') + '</div></div>' +
+      '<div class="card"><table><thead><tr><th>Dia</th><th>Escala</th><th>Diário</th><th>Só quem falta</th></tr></thead><tbody>' +
+      linhas + '</tbody></table></div>' +
+      '<div class="muted center">Lembretes diários e de domingo pulam quem já marcou a tarefa no app (tarefas diárias sempre recebem o diário).</div>'
   );
 }
-
 
 /* =====================================================================
  * CONEXÃO COM O APP TOCAH
@@ -1163,7 +1005,7 @@ function htmlEmailExtraBanheirao(tarefaBanheirao) {
 }
 
 /** Card do morador: avatar + nome + tarefa + pílulas de prazo/frequência + descrição. */
-function htmlEmailCartaoMorador_(nome, tarefa, extraHtml, destaque) {
+function htmlEmailCartaoMorador_(nome, tarefa, extraHtml, destaque, feitoEm) {
   var ff = htmlEmailFontStack();
   var topo =
       '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;"><tr>\n' +
@@ -1172,7 +1014,10 @@ function htmlEmailCartaoMorador_(nome, tarefa, extraHtml, destaque) {
       '<div style="font-size:12px;font-weight:800;letter-spacing:0.08em;text-transform:uppercase;color:' + TOCAH_COR.textSubtle + ';">' + nome + '</div>\n' +
       '<div style="margin-top:2px;font-size:18px;font-weight:900;line-height:1.25;color:' + TOCAH_COR.text + ';">' + nomeBonitoTarefa_(tarefa.area) + '</div>\n' +
       '</td></tr></table>\n';
-  var pills = '<div style="margin-top:12px;">' +
+  var statusPill = '';
+  if (feitoEm === false) statusPill = htmlEmailPill_('⏳ Falta marcar no app', TOCAH_COR.warningSoft, TOCAH_COR.onWarningSoft);
+  else if (feitoEm) statusPill = htmlEmailPill_('✅ Feita no app', TOCAH_COR.successSoft, TOCAH_COR.onSuccessSoft);
+  var pills = '<div style="margin-top:12px;">' + statusPill +
       (tarefa.prazo ? htmlEmailPill_(prazoBonito_(tarefa.prazo), TOCAH_COR.primarySoft, TOCAH_COR.onPrimarySoft) : '') +
       (tarefa.freq ? htmlEmailPill_(tarefa.freq, TOCAH_COR.surfaceAlt, TOCAH_COR.textMuted) : '') +
       '</div>\n';
@@ -1242,19 +1087,27 @@ function htmlEmailSpacer(px) {
 
 /* ---------- Montagem dos 3 e-mails ---------- */
 
-function montarHtmlEmailUnico(atribuicoes, isLembrete, banheiraoResp, tarefaBanheirao) {
+function montarHtmlEmailUnico(atribuicoes, isLembrete, banheiraoResp, tarefaBanheirao, statusApp) {
   const periodo = getPeriodoValidade();
   const preheader = isLembrete ?
       'Prazo no fim da semana — confira o que falta na Tocah.' :
       'Escala da semana: quem cuida de cada área, prazos e o que fazer.';
-  const intro = isLembrete ?
+  var intro = isLembrete ?
       'O prazo da semana está acabando. Confiram o que falta pra ninguém pagar multa:' :
-      'Quem cuida de cada área nesta semana, até quando e o que fazer.';
+      'Quem cuida de cada área nesta semana, até quando e o que fazer. Quando terminar, marque como feita no app.';
+  if (isLembrete && statusApp) {
+    var faltam = atribuicoes.filter(function (a) { return !statusApp[normNome_(a.morador.nome)]; })
+        .map(function (a) { return a.morador.nome.charAt(0) + a.morador.nome.slice(1).toLowerCase(); });
+    intro = faltam.length ?
+        'O prazo da semana está acabando. Ainda falta marcar no app: <b>' + faltam.join(', ') + '</b>.' :
+        'Todo mundo já marcou a tarefa no app nesta semana. Valeu, galera! 🎉';
+  }
 
   var cards = '';
   atribuicoes.forEach(function (a) {
     var temB = banheiraoResp && banheiraoResp.nome === a.morador.nome && tarefaBanheirao;
-    cards += '<tr><td>' + htmlEmailCartaoMorador_(a.morador.nome, a.tarefa, temB ? htmlEmailExtraBanheirao(tarefaBanheirao) : '') + '</td></tr>\n';
+    var feitoEm = statusApp ? (statusApp[normNome_(a.morador.nome)] || false) : undefined;
+    cards += '<tr><td>' + htmlEmailCartaoMorador_(a.morador.nome, a.tarefa, temB ? htmlEmailExtraBanheirao(tarefaBanheirao) : '', false, feitoEm) + '</td></tr>\n';
   });
 
   return (
@@ -1271,17 +1124,22 @@ function montarHtmlEmailUnico(atribuicoes, isLembrete, banheiraoResp, tarefaBanh
   );
 }
 
-function montarHtmlLembreteDiario(nomeMorador, areaResumo, freq, descHtml, extraBanheiraoHtml, prazo) {
+function montarHtmlLembreteDiario(nomeMorador, areaResumo, freq, descHtml, extraBanheiraoHtml, prazo, ultimoDia) {
   const periodo = getPeriodoValidade();
-  const preheader = 'Oi, ' + nomeMorador + ' — sua tarefa de hoje na Tocah.';
+  const preheader = ultimoDia ?
+      'Último dia da semana — falta marcar sua tarefa no app.' :
+      'Oi, ' + nomeMorador + ' — sua tarefa de hoje na Tocah.';
   var tarefa = { area: areaResumo, prazo: prazo || '', freq: freq, desc: descHtml };
   return (
       htmlEmailDocOpen(preheader) +
-      htmlEmailHeroRoxo('Oi, ' + nomeMorador.charAt(0) + nomeMorador.slice(1).toLowerCase() + '!', 'Valeu por cuidar da casa 💜', true, 'Lembrete do dia') +
+      htmlEmailHeroRoxo('Oi, ' + nomeMorador.charAt(0) + nomeMorador.slice(1).toLowerCase() + '!',
+          ultimoDia ? '⏰ Hoje é o último dia da semana' : 'Valeu por cuidar da casa 💜', true, ultimoDia ? 'Último dia' : 'Lembrete do dia') +
       htmlEmailCorpoAbre() +
       '<tr><td>' + htmlEmailChipPeriodo(periodo) +
-      htmlEmailLead('Um toque rápido pra manter a rotina em dia. Essa é a sua tarefa da semana:') + '</td></tr>\n' +
-      '<tr><td>' + htmlEmailCartaoMorador_(nomeMorador, tarefa, extraBanheiraoHtml || '', true) + '</td></tr>\n' +
+      htmlEmailLead(ultimoDia ?
+          'Sua tarefa ainda não está marcada como feita no app. Se já fez, é só marcar; se não, ainda dá tempo:' :
+          'Um toque rápido pra manter a rotina em dia. Essa é a sua tarefa da semana:', !!ultimoDia) + '</td></tr>\n' +
+      '<tr><td>' + htmlEmailCartaoMorador_(nomeMorador, tarefa, extraBanheiraoHtml || '', true, ultimoDia ? false : undefined) + '</td></tr>\n' +
       '<tr><td>' + htmlEmailCaixaMulta() + '</td></tr>\n' +
       htmlEmailCorpoFecha() +
       htmlEmailRodape() +
@@ -1306,4 +1164,182 @@ function montarHtmlEmailApenasBanheirao(isLembrete, banheiraoResp, tarefaBanheir
       htmlEmailRodape() +
       htmlEmailDocClose()
   );
+}
+
+
+/* =====================================================================
+ * STATUS DO APP · quem já marcou a tarefa como feita nesta semana
+ * O app grava cada "concluí" na aba TarefasFeed (tipo "check").
+ * ===================================================================== */
+
+function normNome_(v) {
+  return String(v || '').normalize('NFD').replace(/[̀-ͯ]/g, '').trim().toUpperCase();
+}
+
+/** Segunda-feira 00:00 (horário de Brasília) da semana atual. */
+function inicioSemanaSP_() {
+  var agora = new Date();
+  var diaSemana = Number(Utilities.formatDate(agora, 'America/Sao_Paulo', 'u')); // 1 = segunda ... 7 = domingo
+  var hojeStr = Utilities.formatDate(agora, 'America/Sao_Paulo', 'yyyy-MM-dd');
+  var hoje0 = new Date(hojeStr + 'T00:00:00-03:00');
+  return new Date(hoje0.getTime() - (diaSemana - 1) * 24 * 60 * 60 * 1000);
+}
+
+/** { NOME: Date } de quem já concluiu a tarefa da semana pelo app. */
+function concluidasNoApp_() {
+  var feitos = {};
+  try {
+    var aba = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('TarefasFeed');
+    if (!aba || aba.getLastRow() < 1) return feitos;
+    var ini = inicioSemanaSP_().getTime();
+    var fim = ini + 7 * 24 * 60 * 60 * 1000;
+    var linhas = aba.getRange(1, 1, aba.getLastRow(), 4).getValues(); // semana | ts | tipo | quem
+    linhas.forEach(function (l) {
+      if (String(l[2]).toLowerCase() !== 'check') return;
+      var ts = l[1] instanceof Date ? l[1] : new Date(String(l[1]));
+      if (isNaN(ts.getTime()) || ts.getTime() < ini || ts.getTime() >= fim) return;
+      var quem = normNome_(l[3]);
+      if (quem) feitos[quem] = ts;
+    });
+  } catch (e) {
+    registrarLog('ERRO status do app', String(e));
+  }
+  return feitos;
+}
+
+function tarefaDiaria_(tarefa) {
+  return /^DI[ÁA]RIO$/i.test(String((tarefa && tarefa.prazo) || '').trim());
+}
+
+/* =====================================================================
+ * LEMBRETE AUTOMÁTICO DE DOMINGO · só para quem ainda não marcou no app
+ * ===================================================================== */
+
+function lembreteDomingoPendentes() {
+  var atribuicoes = getAtribuicoesSemana();
+  var feitos = concluidasNoApp_();
+  var banheiraoResp = getBanheiraoSemana();
+  var tarefaBanheirao = getTarefaBanheirao();
+  var pendentes = atribuicoes.filter(function (a) { return !feitos[normNome_(a.morador.nome)]; });
+  if (!pendentes.length) {
+    registrarLog('Lembrete de domingo', 'Ninguém pendente — todo mundo marcou no app 🎉');
+    return;
+  }
+  pendentes.forEach(function (a) {
+    var extra = banheiraoResp && banheiraoResp.nome === a.morador.nome ? htmlEmailExtraBanheirao(tarefaBanheirao) : '';
+    var html = montarHtmlLembreteDiario(a.morador.nome, a.tarefa.area, a.tarefa.freq, a.tarefa.desc, extra, a.tarefa.prazo, true);
+    MailApp.sendEmail({ to: a.morador.email, subject: '⏰ Último dia · marque sua tarefa no app Tocah', htmlBody: html });
+  });
+  registrarLog('Lembrete de domingo', 'Enviado para: ' + pendentes.map(function (a) { return a.morador.nome; }).join(', '));
+}
+
+function configurarLembreteDomingo() {
+  removerLembreteDomingo(true);
+  ScriptApp.newTrigger('lembreteDomingoPendentes').timeBased()
+      .onWeekDay(ScriptApp.WeekDay.SUNDAY).atHour(18).inTimezone('America/Sao_Paulo').create();
+  try {
+    SpreadsheetApp.getUi().alert('✅ Lembrete de domingo ligado (18h), só para quem ainda não marcou a tarefa no app.');
+  } catch (e) {}
+}
+
+function removerLembreteDomingo(silencioso) {
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === 'lembreteDomingoPendentes') ScriptApp.deleteTrigger(t);
+  });
+  if (!silencioso) {
+    try {
+      SpreadsheetApp.getUi().alert('✅ Lembrete de domingo desligado.');
+    } catch (e) {}
+  }
+}
+
+/* =====================================================================
+ * STATUS DA SEMANA NA PLANILHA (quem marcou no app)
+ * ===================================================================== */
+
+function mostrarStatusDaSemana() {
+  var html = HtmlService.createHtmlOutput(getHtmlStatusSemana()).setWidth(460).setHeight(560);
+  SpreadsheetApp.getUi().showModalDialog(html, 'Status da semana · Tocah');
+}
+
+function getHtmlStatusSemana() {
+  var atribuicoes = getAtribuicoesSemana();
+  var feitos = concluidasNoApp_();
+  var banheiro = getBanheiraoSemana();
+  var feitosN = 0;
+  var linhas = atribuicoes.map(function (a, i) {
+    var quando = feitos[normNome_(a.morador.nome)];
+    if (quando) feitosN++;
+    var cor = TOCAH_AVATAR[i % TOCAH_AVATAR.length];
+    return '<div class="row">' +
+        '<div class="av" style="background:' + cor.bg + ';color:' + cor.fg + '">' + a.morador.nome.charAt(0) + '</div>' +
+        '<div class="grow"><div class="ov">' + a.morador.nome + (banheiro && banheiro.nome === a.morador.nome ? ' · 🚿 banheirão' : '') + '</div>' +
+        '<div class="tt">' + nomeBonitoTarefa_(a.tarefa.area) + '</div></div>' +
+        (quando ?
+          '<span class="pill ok">✅ ' + Utilities.formatDate(quando, 'America/Sao_Paulo', "EEE HH'h'mm") + '</span>' :
+          '<span class="pill wait">⏳ Pendente</span>') +
+        '</div>';
+  }).join('');
+  var pct = Math.round((feitosN / Math.max(1, atribuicoes.length)) * 100);
+  return htmlPainelDoc_(
+      '<div class="hero"><div class="ov light">' + String(getPeriodoValidade()).replace('🗓️ ', '') + '</div>' +
+      '<div class="h1">Status da semana</div>' +
+      '<div class="sub">' + feitosN + ' de ' + atribuicoes.length + ' já marcaram no app</div>' +
+      '<div class="bar"><div style="width:' + pct + '%"></div></div></div>' +
+      '<div class="card">' + linhas + '</div>' +
+      '<div class="muted center">Lido da aba TarefasFeed (o que o app grava quando alguém conclui).</div>'
+  );
+}
+
+/* =====================================================================
+ * VISUAL DOS PAINÉIS DA PLANILHA (sidebar e janelas) · igual ao app
+ * ===================================================================== */
+
+function htmlPainelCss_() {
+  return (
+      '<style>' +
+      ':root{--bg:#F6F4FA;--sf:#FFFFFF;--alt:#F3EFF8;--tx:#1C1A26;--mu:#625D75;--su:#8F8AA3;--bd:#E7E2EF;' +
+      '--p:#6A1B9A;--pd:#4A148C;--ps:#F2E7F9;--ops:#55137E;--ds:#FBE6E8;--ods:#951E28;--ws:#FCF0DA;--ows:#7A4700;--ss:#E4F4EA;--oss:#14663A}' +
+      '@media (prefers-color-scheme:dark){:root{--bg:#110F17;--sf:#1B1924;--alt:#23202E;--tx:#F3F0FA;--mu:#B3ADC4;--su:#827C96;--bd:#2D2939;' +
+      '--p:#C894EA;--pd:#4A148C;--ps:#2E2140;--ops:#E6CFF6;--ds:#3A1A20;--ods:#FFB3BA;--ws:#352813;--ows:#F8D49C;--ss:#17301F;--oss:#9BE6BA}}' +
+      '*{box-sizing:border-box}body{margin:0;padding:14px;background:var(--bg);color:var(--tx);' +
+      "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;font-weight:600}" +
+      '.hero{border-radius:22px;padding:16px;margin-bottom:12px;color:#fff;background:linear-gradient(135deg,#6A1B9A,#4A148C)}' +
+      '.ov{font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--su)}.ov.light{color:rgba(255,255,255,.78)}' +
+      '.h1{font-size:19px;font-weight:900;margin-top:2px}.sub{font-size:13px;margin-top:4px;color:rgba(255,255,255,.85)}' +
+      '.bar{height:8px;border-radius:99px;background:rgba(255,255,255,.25);margin-top:10px;overflow:hidden}.bar div{height:100%;background:#fff;border-radius:99px}' +
+      '.card{background:var(--sf);border:1px solid var(--bd);border-radius:20px;padding:12px 14px;margin-bottom:12px}' +
+      '.sec{font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--p);margin:4px 2px 8px}' +
+      '.row{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--bd)}.row:last-child{border-bottom:0}' +
+      '.av{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:900;flex:none}' +
+      '.grow{flex:1;min-width:0}.tt{font-size:14px;font-weight:900}' +
+      '.pill{display:inline-block;padding:5px 10px;border-radius:99px;font-size:11px;font-weight:800;white-space:nowrap}' +
+      '.ok{background:var(--ss);color:var(--oss)}.wait{background:var(--ws);color:var(--ows)}.off{background:var(--ds);color:var(--ods)}.pp{background:var(--ps);color:var(--ops)}' +
+      'button{width:100%;min-height:44px;border:0;border-radius:14px;padding:11px 14px;margin-bottom:8px;font:inherit;font-weight:800;font-size:13px;' +
+      'cursor:pointer;text-align:left;background:var(--sf);color:var(--tx);border:1px solid var(--bd)}' +
+      'button:hover{border-color:var(--p)}button.primary{background:var(--p);color:#fff;border-color:var(--p);text-align:center;font-weight:900}' +
+      '@media (prefers-color-scheme:dark){button.primary{color:#1D0F29}}' +
+      'button.soft{background:var(--ps);color:var(--ops);border-color:transparent}button.danger{background:var(--ds);color:var(--ods);border-color:transparent}' +
+      'button:disabled{opacity:.6;cursor:wait}' +
+      '.muted{font-size:12px;color:var(--su);line-height:1.45}.center{text-align:center}' +
+      '#status{position:sticky;bottom:0;display:none;margin-top:8px;padding:12px 14px;border-radius:14px;font-size:13px;font-weight:800;background:var(--ss);color:var(--oss)}' +
+      '#status.err{background:var(--ds);color:var(--ods)}' +
+      '.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}' +
+      '.tile{background:var(--alt);border-radius:16px;padding:10px 12px}.tile.b{background:var(--ds)}.tile.b .tt,.tile.b .ov{color:var(--ods)}' +
+      'table{width:100%;border-collapse:collapse}td,th{padding:10px 6px;border-bottom:1px solid var(--bd);font-size:13px;text-align:left}th{font-size:11px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--su)}' +
+      'tr.today td{background:var(--ps)}' +
+      '</style>'
+  );
+}
+
+function htmlPainelDoc_(corpo) {
+  return '<!DOCTYPE html><html><head><base target="_top"><meta charset="utf-8">' + htmlPainelCss_() + '</head><body>' + corpo + '</body></html>';
+}
+
+function abrirAppDaCasa() {
+  var html = HtmlService.createHtmlOutput(htmlPainelDoc_(
+      '<div class="hero"><div class="ov light">App da casa</div><div class="h1">Abrindo o app Tocah…</div></div>' +
+      '<button class="primary" onclick="window.open(\'' + APP_URL + '\',\'_blank\');google.script.host.close()">Abrir o app 🐰</button>' +
+      '<script>window.open(\'' + APP_URL + '\',\'_blank\');</script>')).setWidth(320).setHeight(190);
+  SpreadsheetApp.getUi().showModalDialog(html, 'Tocah');
 }
