@@ -5,12 +5,16 @@
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
-    "preview:finance": "node scripts/preview-finance.js"
+    "preview:finance": "node scripts/preview-finance.js",
+    "test": "node --test"
   },
   "dependencies": {
     "cors": "^2.8.5",
     "dotenv": "^16.6.1",
     "express": "^4.21.2",
     "googleapis": "^150.0.1"
+  },
+  "engines": {
+    "node": ">=18"
   }
 }
