@@ -13,6 +13,10 @@ function enviarBoasVindasFelipe() {
   enviarBoasVindas_('FELIPE', { teste: false, genero: 'o' });
 }
 
+/** Imagens do app (mesmos arquivos do Drive que o app usa). */
+var BV_LOGO_URL = 'https://lh3.googleusercontent.com/d/1K-KUlO4ZNy5TFz1YIsVh__uxICixnkBS=w256';
+var BV_FOTO_CASA_URL = 'https://lh3.googleusercontent.com/d/1GLeZgJ8o3l5Gvp8j5_W42Ld3f-puR2aQ=w1200';
+
 /** Cores do app (mesmos tokens do tema claro). */
 var BV_COR = {
   bg: '#F6F4FA',
@@ -156,12 +160,24 @@ function enviarBoasVindas_(nomeBusca, opcoes) {
     '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:separate;border-radius:26px;' +
     'background-color:' + C.primary + ';background-image:linear-gradient(135deg,' + C.primary + ' 0%,' + C.primaryDark + ' 100%);">' +
     '<tr><td style="padding:26px 22px 24px;text-align:center;font-family:' + fs + ';">' +
-    '<div style="display:inline-block;">' + imgs.imgLogoHTML + '</div>' +
+    '<img src="' + BV_LOGO_URL + '" alt="Logo da República Tocah do Coelho" width="76" height="76" ' +
+    'style="display:block;margin:0 auto;width:76px;height:76px;border-radius:50%;border:3px solid rgba(255,255,255,0.35);" />' +
     '<div style="margin-top:8px;font-size:11px;font-weight:800;letter-spacing:0.12em;text-transform:uppercase;color:rgba(255,255,255,0.78);">Boas-vindas</div>' +
-    '<div style="margin-top:4px;font-size:24px;font-weight:900;line-height:1.2;color:#FFFFFF;">Bem-vind' + g + ' à ' + CONFIG.branding.nomeCurto + ', ' + primeiroNome + '! 🐰</div>' +
+    '<div style="margin-top:4px;font-size:24px;font-weight:900;line-height:1.2;color:#FFFFFF;">Bem-vind' + g + ' à ' + CONFIG.branding.nomeCurto + ', ' + primeiroNome + '!</div>' +
     '<div style="margin:14px auto 0;max-width:460px;padding:12px 14px;border-radius:16px;background-color:rgba(255,255,255,0.16);' +
     'border:1px solid rgba(255,255,255,0.28);font-size:14px;font-weight:600;line-height:1.55;color:#FFFFFF;">' +
     'É um enorme prazer ter você com a gente. Aqui está o essencial: datas, o app da casa, convivência, o estatuto e o PIX.</div>' +
+    '</td></tr></table></td></tr>' +
+    // Foto da casa (a mesma do Início do app)
+    '<tr><td style="padding:0 0 12px;">' +
+    '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:separate;border-radius:26px;' +
+    'background-color:' + C.surface + ';border:1px solid ' + C.border + ';overflow:hidden;">' +
+    '<tr><td style="padding:0;line-height:0;font-size:0;">' +
+    '<img src="' + BV_FOTO_CASA_URL + '" alt="Foto da Tocah" width="600" ' +
+    'style="display:block;width:100%;max-width:600px;height:auto;border-radius:26px 26px 0 0;" /></td></tr>' +
+    '<tr><td style="padding:12px 18px 14px;font-family:' + fs + ';">' +
+    '<div style="font-size:15px;font-weight:900;color:' + C.text + ';">Sua nova casa 🏡</div>' +
+    '<div style="margin-top:2px;font-size:13px;font-weight:600;color:' + C.textMuted + ';">República Tocah do Coelho</div>' +
     '</td></tr></table></td></tr>';
 
   var datas = secao_('Calendário', 'Datas para guardar',
