@@ -1,687 +1,318 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, Image, Modal, Pressable, RefreshControl, ScrollView, Share, StyleSheet, Text, TextInput, View } from 'react-native';
-import * as ImagePicker from 'expo-image-picker';
-import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { useFocusEffect } from '@react-navigation/native';
-import { addTaskFeedComment, deleteTaskFeedPost, getApiConnectionStatus, getTaskFeed, subscribeApiConnectionStatus } from '../services/api';
-import { useThemeMode } from '../context/ThemeContext';
-import { darkTheme, lightTheme } from '../constants/theme';
-import { AppHeader } from '../components/AppHeader';
+import { useMemo, useState } from 'react';
+import { Image, Platform, StyleSheet, TextInput, View } from 'react-native';
+import { Screen } from '../components/Screen';
+import { FeedPhoto } from '../components/FeedPhoto';
+import { AppText, Avatar, Button, Card, Chip, EmptyState, Icon, IconButton, PressableScale, SkeletonCard, StatusPill, useFeedback } from '../components/ui';
 import { useResident } from '../context/ResidentContext';
+import { useTheme } from '../theme/ThemeContext';
+import { useFeed } from '../data/hooks';
+import { invalidateResources, mutateResource } from '../data/store';
+import { addTaskFeedComment, deleteTaskFeedPost, toggleFeedLike } from '../services/api';
+import { formatRelativeTime, weekRangeLabel } from '../utils/date';
+import { pickPhoto } from '../utils/photo';
+import { shareText } from '../utils/share';
+import { displayName, norm, sameName } from '../utils/text';
 
-function formatRelativeTime(iso) {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '';
-  const diffMs = Date.now() - d.getTime();
-  const diffMin = Math.floor(diffMs / 60000);
-  const diffHour = Math.floor(diffMin / 60);
-  const diffDay = Math.floor(diffHour / 24);
-  if (diffMin < 1) return 'agora';
-  if (diffMin < 60) return `ha ${diffMin} min`;
-  if (diffHour < 24) return `ha ${diffHour} h`;
-  if (diffDay === 1) return 'ontem';
-  return d.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+const looksLikeTs = (v) => /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(String(v || ''));
+const isNilde = (p) => p.type === 'comment' && norm(p.target) === 'NILDE';
+const isReply = (p) => p.type === 'comment_reply' || (p.type === 'comment' && looksLikeTs(p.target));
+
+function postMeta(post) {
+  if (post.type === 'check') return { label: 'Tarefa feita', tone: 'success', icon: 'check-circle-outline' };
+  if (post.type === 'rating') return { label: 'Avaliação', tone: 'warning', icon: 'star-outline' };
+  if (isNilde(post)) return { label: 'Nilde', tone: 'primary', icon: 'rabbit' };
+  return null;
 }
 
-function looksLikePostTs(value = '') {
-  const raw = String(value || '').trim();
-  return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(raw);
-}
+function Composer({ onPosted }) {
+  const { resident } = useResident();
+  const { colors, spacing, radius, typography } = useTheme();
+  const { toast, toastError } = useFeedback();
+  const [text, setText] = useState('');
+  const [photo, setPhoto] = useState('');
+  const [posting, setPosting] = useState(false);
 
-function getPostMeta(post) {
-  if (post.type === 'check') return { icon: 'checkbox-marked-circle-outline', label: 'Concluiu tarefa', color: '#16a34a' };
-  if (post.type === 'rating') return { icon: 'star-circle-outline', label: 'Avaliação', color: '#f59e0b' };
-  return { icon: 'message-reply-text-outline', label: 'Publicação', color: '#7c3aed' };
-}
-
-function getAvatarPalette(name = '') {
-  const palettes = [
-    { bg: '#ede9fe', fg: '#5b21b6' },
-    { bg: '#e0f2fe', fg: '#0c4a6e' },
-    { bg: '#dcfce7', fg: '#166534' },
-    { bg: '#ffe4e6', fg: '#9f1239' },
-    { bg: '#fef3c7', fg: '#92400e' },
-  ];
-  const str = String(name || '').trim().toUpperCase();
-  const seed = str.split('').reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
-  return palettes[seed % palettes.length];
-}
-
-function getInitial(name = '') {
-  const raw = String(name || '').trim();
-  return raw ? raw.slice(0, 1).toUpperCase() : '?';
-}
-
-const FEED_LIKES_KEY = '@tocah_feed_likes_v1';
-const IMAGE_MEDIA_TYPES = ImagePicker.MediaType?.Images || 'images';
-
-export function FeedScreen() {
-  const { isDark } = useThemeMode();
-  const { resident, getResidentPhoto, setResidentPhoto, removeResidentPhoto } = useResident();
-  const colors = isDark ? darkTheme : lightTheme;
-  const panelBg = isDark ? '#252338' : '#fff';
-  const panelBorder = isDark ? '#3b3754' : '#d1d5db';
-  const softBg = isDark ? '#2c2940' : '#f3e5f5';
-  const softBorder = isDark ? '#4a4566' : '#e9d5ff';
-  const inputBg = isDark ? '#211f31' : '#fff';
-  const inputBorder = isDark ? '#3e3a56' : '#d1d5db';
-  const footerBg = isDark ? '#242238' : '#f8fafc';
-  const footerBorder = isDark ? '#3a3652' : '#e5e7eb';
-  const replyBg = isDark ? '#221f34' : '#faf5ff';
-  const replyBorder = isDark ? '#3f3a58' : '#ede9fe';
-  const activePurple = isDark ? '#c4b5fd' : '#6a1b9a';
-  const activePurpleDeep = isDark ? '#ddd6fe' : '#4a148c';
-  const [feed, setFeed] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState('');
-  const [filter, setFilter] = useState('all');
-  const [commentText, setCommentText] = useState('');
-  const [postPhoto, setPostPhoto] = useState('');
-  const [postingMain, setPostingMain] = useState(false);
-  const [replyingToTs, setReplyingToTs] = useState('');
-  const [replyText, setReplyText] = useState('');
-  const [postingReply, setPostingReply] = useState(false);
-  const [photoViewerVisible, setPhotoViewerVisible] = useState(false);
-  const [selectedFeedPhoto, setSelectedFeedPhoto] = useState('');
-  const [likedByPostTs, setLikedByPostTs] = useState({});
-  const [apiStatus, setApiStatus] = useState(() => getApiConnectionStatus());
-
-  const load = useCallback(async (mode = 'normal') => {
-    if (mode === 'pull') setRefreshing(true);
-    if (mode === 'normal') setLoading(true);
+  const attach = async (source) => {
     try {
-      const data = await getTaskFeed();
-      setFeed(data?.feed || []);
-      setError('');
+      const data = await pickPhoto({ source, size: 'proof' });
+      if (data) setPhoto(data);
     } catch (e) {
-      setError(e?.message || 'Nao foi possivel carregar o feed.');
+      toastError(e);
+    }
+  };
+
+  const post = async () => {
+    if (!text.trim() && !photo) return;
+    setPosting(true);
+    try {
+      await addTaskFeedComment({ actor: resident, content: text.trim(), photoDataUrl: photo });
+      setText('');
+      setPhoto('');
+      toast('Publicado!', 'success');
+      onPosted?.();
+    } catch (e) {
+      toastError(e, 'Não deu para publicar.');
     } finally {
-      if (mode === 'pull') setRefreshing(false);
-      if (mode === 'normal') setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, []);
-
-  useEffect(() => {
-    (async () => {
-      try {
-        const raw = await AsyncStorage.getItem(FEED_LIKES_KEY);
-        const parsed = raw ? JSON.parse(raw) : {};
-        setLikedByPostTs(parsed && typeof parsed === 'object' ? parsed : {});
-      } catch {
-        setLikedByPostTs({});
-      }
-    })();
-  }, []);
-
-  useEffect(() => {
-    const unsubscribe = subscribeApiConnectionStatus((next) => setApiStatus(next));
-    return unsubscribe;
-  }, []);
-
-  useFocusEffect(
-    useCallback(() => {
-      load('silent');
-      const timer = setInterval(() => load('silent'), 20000);
-      return () => clearInterval(timer);
-    }, [load])
-  );
-
-  const pickPostPhoto = async () => {
-    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!permission.granted) {
-      Alert.alert('Permissão necessária', 'Permita o acesso à galeria para anexar foto.');
-      return;
-    }
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: IMAGE_MEDIA_TYPES,
-      quality: 0.25,
-      allowsEditing: true,
-      base64: true,
-    });
-    if (result.canceled || !result.assets?.[0]?.base64) {
-      Alert.alert('Falha na foto', 'Selecione uma imagem (não vídeo) para postar.');
-      return;
-    }
-    setPostPhoto(`data:image/jpeg;base64,${result.assets[0].base64}`);
-  };
-
-  const takePostPhoto = async () => {
-    const permission = await ImagePicker.requestCameraPermissionsAsync();
-    if (!permission.granted) {
-      Alert.alert('Permissão necessária', 'Permita o uso da câmera para tirar foto no post.');
-      return;
-    }
-    const result = await ImagePicker.launchCameraAsync({
-      mediaTypes: IMAGE_MEDIA_TYPES,
-      quality: 0.25,
-      allowsEditing: true,
-      base64: true,
-    });
-    if (result.canceled || !result.assets?.[0]?.base64) {
-      Alert.alert('Falha na foto', 'Não foi possível capturar a imagem.');
-      return;
-    }
-    setPostPhoto(`data:image/jpeg;base64,${result.assets[0].base64}`);
-  };
-
-  const topLevelFeed = useMemo(() => {
-    const base = (feed || []).filter((item) => {
-      if (item.type === 'deleted') return false;
-      if (item.type === 'comment_reply') return false;
-      if (item.type === 'comment' && looksLikePostTs(item.target)) return false;
-      return item.type === 'check' || item.type === 'rating' || item.type === 'comment';
-    });
-    if (filter === 'all') return base;
-    return base.filter((item) => item.type === filter);
-  }, [feed, filter]);
-
-  const repliesByPostTs = useMemo(() => {
-    const map = {};
-    (feed || []).forEach((post) => {
-      const isReply = post.type === 'comment_reply' || (post.type === 'comment' && looksLikePostTs(post.target));
-      if (!isReply) return;
-      const parentTs = String(post.target || post.tarefa || '').trim();
-      if (!parentTs) return;
-      if (!map[parentTs]) map[parentTs] = [];
-      map[parentTs].push(post);
-    });
-    Object.keys(map).forEach((k) => map[k].sort((a, b) => String(a.ts).localeCompare(String(b.ts))));
-    return map;
-  }, [feed]);
-
-  const counters = useMemo(() => {
-    const base = (feed || []).filter((item) => item.type === 'check' || item.type === 'rating' || item.type === 'comment');
-    return {
-      all: base.length,
-      check: base.filter((x) => x.type === 'check').length,
-      rating: base.filter((x) => x.type === 'rating').length,
-      comment: base.filter((x) => x.type === 'comment').length,
-    };
-  }, [feed]);
-
-  const pickProfilePhoto = async () => {
-    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!permission.granted) {
-      Alert.alert('Permissão necessária', 'Permita acesso à galeria para escolher sua foto de perfil.');
-      return;
-    }
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: IMAGE_MEDIA_TYPES,
-      quality: 0.35,
-      allowsEditing: true,
-    });
-    if (result.canceled || !result.assets?.[0]?.uri) return;
-    await setResidentPhoto(resident, result.assets[0].uri);
-    Alert.alert('Perfil atualizado', 'Sua foto de perfil foi atualizada.');
-  };
-
-  const handleProfilePhotoOptions = () => {
-    Alert.alert('Foto de perfil', `Perfil atual: ${resident}`, [
-      { text: 'Cancelar', style: 'cancel' },
-      { text: 'Escolher da galeria', onPress: pickProfilePhoto },
-      {
-        text: 'Remover foto',
-        style: 'destructive',
-        onPress: async () => {
-          await removeResidentPhoto(resident);
-        },
-      },
-    ]);
-  };
-
-  const toggleLike = async (postTs) => {
-    const key = String(postTs || '').trim();
-    if (!key) return;
-    const next = { ...likedByPostTs };
-    if (next[key]) delete next[key];
-    else next[key] = true;
-    setLikedByPostTs(next);
-    try {
-      await AsyncStorage.setItem(FEED_LIKES_KEY, JSON.stringify(next));
-    } catch {
-      // Ignore persistence failures to keep UI responsive.
-    }
-  };
-
-  const openReplyComposer = (postTs) => {
-    const key = String(postTs || '').trim();
-    if (!key) return;
-    setReplyingToTs((prev) => (prev === key ? '' : key));
-  };
-
-  const sharePost = async (post) => {
-    try {
-      const body = `${post?.actor || 'Morador'} • ${formatRelativeTime(post?.ts || '')}\n${post?.content || ''}`;
-      await Share.share({
-        message: `República Tocah\n\n${body}`.trim(),
-        title: 'Compartilhar publicação',
-      });
-    } catch (e) {
-      Alert.alert('Erro', e?.message || 'Não foi possível compartilhar a publicação.');
+      setPosting(false);
     }
   };
 
   return (
-    <ScrollView
-      style={[styles.container, { backgroundColor: colors.background }]}
-      contentContainerStyle={styles.content}
-      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => load('pull')} tintColor={colors.primary} />}
-    >
-      <AppHeader title="Feed da Casa" subtitle={`Atualizações semanais • ${resident}`} />
+    <Card style={{ marginBottom: spacing.md }} padding="md">
+      <View style={[styles.row, { gap: spacing.md, alignItems: 'flex-start' }]}>
+        <Avatar name={resident} size={40} />
+        <TextInput
+          value={text}
+          onChangeText={setText}
+          placeholder="Manda aí pra galera…"
+          placeholderTextColor={colors.textSubtle}
+          multiline
+          style={[typography.body, styles.composerInput, { color: colors.text, backgroundColor: colors.surfaceAlt, borderRadius: radius.md, paddingHorizontal: spacing.md }, Platform.OS === 'web' && { outlineStyle: 'none' }]}
+          accessibilityLabel="Escrever publicação"
+        />
+      </View>
+      {!!photo && (
+        <View style={{ marginTop: spacing.md }}>
+          <Image source={{ uri: photo }} style={{ width: '100%', aspectRatio: 4 / 3, borderRadius: radius.md }} resizeMode="cover" />
+          <IconButton icon="close" variant="header" onPress={() => setPhoto('')} accessibilityLabel="Remover foto" style={{ position: 'absolute', top: 8, right: 8, backgroundColor: colors.imageScrim }} />
+        </View>
+      )}
+      <View style={[styles.row, { marginTop: spacing.sm, gap: spacing.xs }]}>
+        <IconButton icon="image-outline" onPress={() => attach('library')} accessibilityLabel="Anexar foto da galeria" color="primary" />
+        <IconButton icon="camera-outline" onPress={() => attach('camera')} accessibilityLabel="Tirar foto" color="primary" />
+        <View style={{ flex: 1 }} />
+        <Button label="Publicar" icon="send" size="sm" onPress={post} loading={posting} disabled={!text.trim() && !photo} />
+      </View>
+    </Card>
+  );
+}
 
-      <View style={[styles.composerCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-        <View style={styles.composerHead}>
-          {getResidentPhoto(resident) ? (
-            <Image source={{ uri: getResidentPhoto(resident) }} style={styles.composerAvatarPhoto} />
-          ) : (
-            <View style={[styles.composerAvatar, { backgroundColor: getAvatarPalette(resident).bg }]}>
-              <Text style={[styles.composerAvatarText, { color: getAvatarPalette(resident).fg }]}>{getInitial(resident)}</Text>
-            </View>
-          )}
-          <View style={{ flex: 1 }}>
-            <Text style={[styles.composerTitle, { color: colors.text }]}>Publicar no feed</Text>
-            <Text style={styles.composerSubtitle}>Compartilhe progresso, foto ou aviso da casa.</Text>
-          </View>
-          <Pressable style={[styles.profileEditBtn, { backgroundColor: softBg, borderColor: softBorder }]} onPress={handleProfilePhotoOptions}>
-            <MaterialCommunityIcons name="account-edit-outline" size={16} color={activePurple} />
-          </Pressable>
-        </View>
-        <View style={styles.filterRow}>
-          {[
-            ['all', `Tudo (${counters.all})`],
-            ['check', `Checks (${counters.check})`],
-            ['rating', `Notas (${counters.rating})`],
-            ['comment', `Posts (${counters.comment})`],
-          ].map(([id, label]) => (
-            <Pressable
-              key={id}
-              style={[
-                styles.filterChip,
-                { backgroundColor: panelBg, borderColor: panelBorder },
-                filter === id && [styles.filterChipActive, { borderColor: activePurple, backgroundColor: softBg }],
-              ]}
-              onPress={() => setFilter(id)}
-            >
-              <Text style={[styles.filterChipText, { color: colors.muted }, filter === id && [styles.filterChipTextActive, { color: activePurpleDeep }]]}>{label}</Text>
-            </Pressable>
-          ))}
-        </View>
+function Post({ post, replies, onChanged, feedKey }) {
+  const { resident } = useResident();
+  const { colors, spacing, radius, typography } = useTheme();
+  const { toast, toastError, confirm } = useFeedback();
+  const [replyOpen, setReplyOpen] = useState(false);
+  const [showAll, setShowAll] = useState(false);
+  const [reply, setReply] = useState('');
+  const [sending, setSending] = useState(false);
+  const meta = postMeta(post);
+  const likes = post.likes || [];
+  const liked = likes.some((n) => sameName(n, resident));
+  const mine = sameName(post.actor, resident);
+  const anonymous = post.type === 'rating';
+  const shownReplies = showAll ? replies : replies.slice(-2);
 
-        <View style={styles.commentRow}>
-          <TextInput
-            value={commentText}
-            onChangeText={setCommentText}
-            placeholder="Compartilhe algo da semana..."
-            placeholderTextColor="#94a3b8"
-            style={[styles.commentInput, { backgroundColor: inputBg, borderColor: inputBorder, color: colors.text }]}
-          />
-          <Pressable style={[styles.attachBtn, { backgroundColor: panelBg, borderColor: panelBorder }]} onPress={pickPostPhoto}>
-            <MaterialCommunityIcons name="image-plus" size={16} color={activePurple} />
-          </Pressable>
-          <Pressable style={[styles.attachBtn, { backgroundColor: panelBg, borderColor: panelBorder }]} onPress={takePostPhoto}>
-            <MaterialCommunityIcons name="camera-outline" size={16} color={activePurple} />
-          </Pressable>
-          <Pressable
-            style={[styles.sendBtn, postingMain && { opacity: 0.75 }]}
-            onPress={async () => {
-              if (postingMain) return;
-              if (!commentText.trim() && !postPhoto) return;
-              try {
-                setPostingMain(true);
-                await addTaskFeedComment({ actor: resident, content: commentText.trim() || 'publicou uma foto', photoDataUrl: postPhoto });
-                setCommentText('');
-                setPostPhoto('');
-                await load('pull');
-              } catch (e) {
-                    Alert.alert('Erro', e?.message || 'Não foi possível postar.');
-              } finally {
-                setPostingMain(false);
-              }
-            }}
-            disabled={postingMain}
-          >
-            <MaterialCommunityIcons name={postingMain ? 'progress-clock' : 'send'} size={16} color="#fff" />
-          </Pressable>
-        </View>
-        {!!postPhoto && (
-          <View style={styles.previewWrap}>
-            <Image source={{ uri: postPhoto }} style={styles.previewImg} resizeMode="contain" />
-            <Pressable style={[styles.previewRemove, { backgroundColor: panelBg }]} onPress={() => setPostPhoto('')}>
-              <MaterialCommunityIcons name="close-circle" size={20} color="#ef4444" />
-            </Pressable>
-          </View>
+  const like = async () => {
+    const next = liked ? likes.filter((n) => !sameName(n, resident)) : [...likes, resident];
+    mutateResource(feedKey, (prev) => prev && { ...prev, feed: prev.feed.map((p) => (p.ts === post.ts ? { ...p, likes: next } : p)) });
+    try {
+      await toggleFeedLike({ ts: post.ts, actor: resident });
+    } catch (e) {
+      toastError(e, 'Não deu para curtir agora.');
+      invalidateResources('likes');
+    }
+  };
+
+  const remove = async (item, isReplyItem) => {
+    const ok = await confirm({ title: isReplyItem ? 'Apagar resposta?' : 'Apagar publicação?', message: 'Some para todo mundo.', confirmLabel: 'Apagar', destructive: true, icon: 'trash-can-outline' });
+    if (!ok) return;
+    mutateResource(feedKey, (prev) => prev && { ...prev, feed: prev.feed.filter((p) => p.ts !== item.ts) });
+    try {
+      await deleteTaskFeedPost({ ts: item.ts, requester: resident });
+      toast('Apagado.', 'success');
+    } catch (e) {
+      toastError(e);
+    } finally {
+      onChanged?.();
+    }
+  };
+
+  const sendReply = async () => {
+    if (!reply.trim()) return;
+    setSending(true);
+    try {
+      await addTaskFeedComment({ actor: resident, content: reply.trim(), parentTs: post.ts, parentActor: post.actor });
+      setReply('');
+      setShowAll(true);
+      onChanged?.();
+    } catch (e) {
+      toastError(e, 'Não deu para responder.');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const share = async () => {
+    try {
+      const res = await shareText(`República Tocah\n\n${anonymous ? 'Avaliação anônima' : displayName(post.actor)} • ${formatRelativeTime(post.ts)}\n${post.content || ''}`);
+      if (res === 'copied') toast('Texto copiado para colar onde quiser.', 'success');
+    } catch (e) {
+      toastError(e);
+    }
+  };
+
+  const content = isNilde(post) ? String(post.content || '').replace(/^Nilde\s*•\s*/i, '') : post.content;
+
+  return (
+    <Card style={{ marginBottom: spacing.md }} padding="md">
+      <View style={[styles.row, { gap: spacing.md }]}>
+        {anonymous ? (
+          <View style={[styles.anon, { backgroundColor: colors.warningSoft }]}><Icon name="incognito" color="onWarningSoft" size={20} /></View>
+        ) : (
+          <Avatar name={post.actor} size={40} />
         )}
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <AppText variant="bodyStrong" numberOfLines={1}>{anonymous ? 'Avaliador anônimo' : displayName(post.actor)}</AppText>
+          <AppText variant="caption" color="textMuted">{formatRelativeTime(post.ts)}</AppText>
+        </View>
+        {!!meta && <StatusPill label={meta.label} tone={meta.tone} icon={meta.icon} />}
+        {mine && !anonymous && <IconButton icon="trash-can-outline" onPress={() => remove(post, false)} accessibilityLabel="Apagar publicação" size={40} iconSize={20} />}
       </View>
 
-      {!!error && <Text style={styles.error}>{error}</Text>}
-      {!apiStatus?.online && !!apiStatus?.message && <Text style={styles.offlineHint}>{apiStatus.message}</Text>}
-      {!apiStatus?.online && !!apiStatus?.cachedAt && (
-        <Text style={styles.offlineHint}>Ultima consulta salva: {new Date(apiStatus.cachedAt).toLocaleString('pt-BR')}</Text>
-      )}
-      {!!error && (
-        <Pressable style={styles.retryBtn} onPress={() => load('pull')}>
-          <MaterialCommunityIcons name="refresh" size={14} color="#fff" />
-          <Text style={styles.retryBtnText}>Tentar novamente</Text>
-        </Pressable>
-      )}
+      {post.type === 'check' && !!post.tarefa && <AppText variant="heading" style={{ marginTop: spacing.sm }}>{post.tarefa}</AppText>}
+      {post.type === 'rating' && <AppText variant="body" style={{ marginTop: spacing.sm }}>Avaliou a tarefa de <AppText variant="bodyStrong">{displayName(post.target)}</AppText>{post.tarefa ? ` (${post.tarefa})` : ''}.</AppText>}
+      {post.type !== 'rating' && !!content && <AppText variant="body" style={{ marginTop: spacing.sm }}>{content}</AppText>}
+      {post.hasPhoto && <FeedPhoto ts={post.ts} style={{ marginTop: spacing.md }} />}
 
-      {loading ? (
-        <>
-          {[0, 1, 2].map((item) => (
-            <View key={`skeleton-${item}`} style={[styles.feedSkeleton, { borderColor: colors.border, backgroundColor: colors.surface }]}>
-              <View style={styles.feedSkeletonHead}>
-                <View style={[styles.skeletonAvatar, { backgroundColor: isDark ? '#2c2940' : '#ececf1' }]} />
-                <View style={{ flex: 1 }}>
-                  <View style={[styles.skeletonLineLg, { backgroundColor: isDark ? '#2c2940' : '#ececf1' }]} />
-                  <View style={[styles.skeletonLineSm, { backgroundColor: isDark ? '#2c2940' : '#ececf1' }]} />
-                </View>
+      <View style={[styles.row, { marginTop: spacing.sm, marginHorizontal: -spacing.xs }]}>
+        <PressableScale onPress={like} accessibilityLabel={liked ? 'Descurtir' : 'Curtir'} style={styles.action}>
+          <Icon name={liked ? 'heart' : 'heart-outline'} size={20} color={liked ? 'danger' : 'textMuted'} />
+          <AppText variant="captionStrong" color={liked ? 'danger' : 'textMuted'}>{likes.length || 'Curtir'}</AppText>
+        </PressableScale>
+        <PressableScale onPress={() => setReplyOpen((v) => !v)} accessibilityLabel="Responder" style={styles.action}>
+          <Icon name="comment-outline" size={20} color="textMuted" />
+          <AppText variant="captionStrong" color="textMuted">{replies.length || 'Responder'}</AppText>
+        </PressableScale>
+        <PressableScale onPress={share} accessibilityLabel="Compartilhar" style={styles.action}>
+          <Icon name="share-variant-outline" size={20} color="textMuted" />
+        </PressableScale>
+      </View>
+      {likes.length > 0 && <AppText variant="caption" color="textMuted">Curtido por {likes.map(displayName).join(', ')}</AppText>}
+
+      {replies.length > 0 && (
+        <View style={{ marginTop: spacing.sm, gap: spacing.sm, borderLeftWidth: 2, borderLeftColor: colors.border, paddingLeft: spacing.md }}>
+          {replies.length > 2 && !showAll && (
+            <PressableScale onPress={() => setShowAll(true)} accessibilityLabel="Ver todas as respostas" style={{ minHeight: 32, justifyContent: 'center' }}>
+              <AppText variant="captionStrong" color="primary">Ver as {replies.length} respostas</AppText>
+            </PressableScale>
+          )}
+          {shownReplies.map((r) => (
+            <View key={r.ts} style={[styles.row, { gap: spacing.sm, alignItems: 'flex-start' }]}>
+              <Avatar name={r.actor} size={28} />
+              <View style={{ flex: 1, backgroundColor: colors.surfaceAlt, borderRadius: radius.md, padding: spacing.sm }}>
+                <AppText variant="captionStrong">{displayName(r.actor)} <AppText variant="caption" color="textSubtle">· {formatRelativeTime(r.ts)}</AppText></AppText>
+                <AppText variant="body">{r.content}</AppText>
+                {r.hasPhoto && <FeedPhoto ts={r.ts} style={{ marginTop: spacing.xs }} />}
               </View>
-              <View style={[styles.skeletonLineFull, { backgroundColor: isDark ? '#2c2940' : '#ececf1' }]} />
-              <View style={[styles.skeletonImage, { backgroundColor: isDark ? '#2c2940' : '#ececf1' }]} />
+              {sameName(r.actor, resident) && <IconButton icon="trash-can-outline" onPress={() => remove(r, true)} accessibilityLabel="Apagar resposta" size={36} iconSize={18} />}
             </View>
           ))}
+        </View>
+      )}
+
+      {replyOpen && (
+        <View style={[styles.row, { marginTop: spacing.sm, gap: spacing.sm }]}>
+          <TextInput
+            value={reply}
+            onChangeText={setReply}
+            placeholder={`Responder ${anonymous ? '' : displayName(post.actor)}…`}
+            placeholderTextColor={colors.textSubtle}
+            autoFocus
+            onSubmitEditing={sendReply}
+            returnKeyType="send"
+            style={[typography.body, styles.replyInput, { color: colors.text, backgroundColor: colors.surfaceAlt, borderRadius: radius.pill, paddingHorizontal: spacing.md }, Platform.OS === 'web' && { outlineStyle: 'none' }]}
+            accessibilityLabel="Escrever resposta"
+          />
+          <IconButton icon="send" variant="primary" onPress={sendReply} disabled={sending || !reply.trim()} accessibilityLabel="Enviar resposta" />
+        </View>
+      )}
+    </Card>
+  );
+}
+
+const FILTERS = [
+  { value: 'all', label: 'Tudo' },
+  { value: 'comment', label: 'Posts' },
+  { value: 'check', label: 'Tarefas' },
+  { value: 'rating', label: 'Notas' },
+  { value: 'nilde', label: 'Nilde' },
+];
+
+export function FeedScreen() {
+  const { spacing } = useTheme();
+  const [filter, setFilter] = useState('all');
+  const [week, setWeek] = useState('');
+  const feed = useFeed(week);
+  const data = feed.data || {};
+  const items = data.feed || [];
+
+  const { topLevel, repliesByTs, counts } = useMemo(() => {
+    const repliesMap = {};
+    const top = [];
+    items.forEach((p) => {
+      if (p.type === 'deleted') return;
+      if (isReply(p)) {
+        const parent = String(p.target || '').trim();
+        (repliesMap[parent] = repliesMap[parent] || []).push(p);
+      } else if (['check', 'rating', 'comment'].includes(p.type)) top.push(p);
+    });
+    Object.values(repliesMap).forEach((list) => list.sort((a, b) => String(a.ts).localeCompare(String(b.ts))));
+    const kind = (p) => (isNilde(p) ? 'nilde' : p.type);
+    const c = { all: top.length };
+    top.forEach((p) => {
+      c[kind(p)] = (c[kind(p)] || 0) + 1;
+    });
+    return { topLevel: top.filter((p) => filter === 'all' || kind(p) === filter), repliesByTs: repliesMap, counts: c };
+  }, [items, filter]);
+
+  const refresh = () => {
+    invalidateResources('feed');
+    return feed.refresh();
+  };
+
+  const viewingOld = !!week && week !== data.currentWeek;
+
+  return (
+    <Screen title="Feed da casa" subtitle={data.week ? `Semana de ${weekRangeLabel(data.week)}` : 'Atualizações da semana'} onRefresh={refresh}>
+      {!viewingOld && <Composer onPosted={refresh} />}
+      {viewingOld && (
+        <Card variant="sunken" padding="md" style={{ marginBottom: spacing.md }}>
+          <View style={[styles.row, { gap: spacing.sm }]}>
+            <Icon name="history" color="textMuted" />
+            <AppText variant="captionStrong" color="textMuted" style={{ flex: 1 }}>Semana de {weekRangeLabel(week)}</AppText>
+            <Button label="Voltar para esta semana" size="sm" variant="ghost" onPress={() => setWeek('')} />
+          </View>
+        </Card>
+      )}
+      <View style={[styles.filters, { gap: spacing.sm, marginBottom: spacing.md }]}>
+        {FILTERS.map((f) => (
+          <Chip key={f.value} label={f.label} count={counts[f.value] || 0} selected={filter === f.value} onPress={() => setFilter(f.value)} />
+        ))}
+      </View>
+      {feed.loading ? (
+        <>
+          <SkeletonCard lines={3} />
+          <SkeletonCard lines={4} />
         </>
-      ) : null}
-
-      {topLevelFeed.map((post, idx) => (
-        <View key={`${post.ts}-${idx}`} style={[styles.feedItem, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-          <View style={styles.feedHeadRow}>
-            <View style={styles.feedAuthorRow}>
-              {getResidentPhoto(post.actor) ? (
-                <Image source={{ uri: getResidentPhoto(post.actor) }} style={styles.feedAvatarPhoto} />
-              ) : (
-                <View style={[styles.feedAvatar, { backgroundColor: getAvatarPalette(post.actor).bg }]}>
-                  <Text style={[styles.feedAvatarText, { color: getAvatarPalette(post.actor).fg }]}>{getInitial(post.actor)}</Text>
-                </View>
-              )}
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.feedHead, { color: colors.text }]}>{post.actor}</Text>
-                <View style={styles.feedMetaRow}>
-                  <View style={[styles.postTypePill, { backgroundColor: `${getPostMeta(post).color}1A` }]}>
-                    <MaterialCommunityIcons name={getPostMeta(post).icon} size={12} color={getPostMeta(post).color} />
-                    <Text style={[styles.postTypeText, { color: getPostMeta(post).color }]}>{getPostMeta(post).label}</Text>
-                  </View>
-                  <Text style={styles.feedTime}>• {formatRelativeTime(post.ts)}</Text>
-                </View>
-              </View>
-            </View>
-            <View style={styles.feedActions}>
-              <Pressable style={[styles.feedReplyBtn, { backgroundColor: softBg }]} onPress={() => openReplyComposer(post.ts)}>
-                <MaterialCommunityIcons name="comment-text-outline" size={15} color={activePurple} />
-              </Pressable>
-              <Pressable
-                hitSlop={10}
-                style={styles.feedDeleteBtn}
-                onPress={() =>
-                  Alert.alert('Excluir post', 'Deseja realmente excluir este post?', [
-                    { text: 'Cancelar', style: 'cancel' },
-                    {
-                      text: 'Excluir',
-                      style: 'destructive',
-                      onPress: async () => {
-                        try {
-                          await deleteTaskFeedPost({
-                            rowIndex: post.rowIndex,
-                            ts: post.ts,
-                            actor: resident,
-                            postActor: post.actor,
-                            postContent: post.content,
-                            postType: post.type,
-                          });
-                          await load('pull');
-                        } catch (e) {
-                          Alert.alert('Erro', e?.message || 'Não foi possível excluir o post.');
-                        }
-                      },
-                    },
-                  ])
-                }
-              >
-                <MaterialCommunityIcons name="trash-can-outline" size={16} color="#ef4444" />
-              </Pressable>
-            </View>
-          </View>
-
-          {!!post.tarefa && (
-            <Text style={[styles.feedHighlight, { color: colors.text }]}>
-              {post.tarefa}
-            </Text>
-          )}
-          <Text style={[styles.feedBody, { color: colors.muted }]}>{post.content || post.target || ''}</Text>
-
-          {!!post.photoDataUrl && (
-            <Pressable
-              onPress={() => {
-                setSelectedFeedPhoto(post.photoDataUrl);
-                setPhotoViewerVisible(true);
-              }}
-            >
-              <Image source={{ uri: post.photoDataUrl }} style={styles.feedPhoto} resizeMode="contain" />
-            </Pressable>
-          )}
-
-          <View style={styles.feedFooterBar}>
-            <Pressable
-              style={[
-                styles.feedFooterAction,
-                { backgroundColor: footerBg, borderColor: footerBorder },
-                likedByPostTs[post.ts] && [styles.feedFooterActionActive, { backgroundColor: softBg, borderColor: softBorder }],
-              ]}
-              onPress={() => toggleLike(post.ts)}
-            >
-              <MaterialCommunityIcons name={likedByPostTs[post.ts] ? 'heart' : 'heart-outline'} size={16} color={likedByPostTs[post.ts] ? '#e11d48' : '#9ca3af'} />
-              <Text style={[styles.feedFooterText, likedByPostTs[post.ts] && styles.feedFooterTextActive]}>
-                {likedByPostTs[post.ts] ? 'Curtido' : 'Curtir'}
-              </Text>
-            </Pressable>
-            <Pressable
-              style={[
-                styles.feedFooterAction,
-                { backgroundColor: footerBg, borderColor: footerBorder },
-                replyingToTs === post.ts && [styles.feedFooterActionActive, { backgroundColor: softBg, borderColor: softBorder }],
-              ]}
-              onPress={() => openReplyComposer(post.ts)}
-            >
-              <MaterialCommunityIcons name="comment-outline" size={16} color={replyingToTs === post.ts ? activePurple : '#9ca3af'} />
-              <Text style={[styles.feedFooterText, replyingToTs === post.ts && styles.feedFooterTextActive]}>
-                {(repliesByPostTs[post.ts] || []).length} comentários
-              </Text>
-            </Pressable>
-            <Pressable style={[styles.feedFooterAction, { backgroundColor: footerBg, borderColor: footerBorder }]} onPress={() => sharePost(post)}>
-              <MaterialCommunityIcons name="share-outline" size={16} color="#9ca3af" />
-              <Text style={styles.feedFooterText}>Compartilhar</Text>
-            </Pressable>
-          </View>
-
-          {!!(repliesByPostTs[post.ts] || []).length && (
-            <View style={styles.replyTimeline}>
-              <View style={styles.replyTimelineLine} />
-              {(repliesByPostTs[post.ts] || []).map((reply, ridx) => (
-                <View key={`${post.ts}-r-${reply.ts}-${ridx}`} style={styles.replyTimelineItem}>
-                  <View style={styles.replyDot} />
-                  <View style={[styles.replyBubble, { backgroundColor: replyBg, borderColor: replyBorder }]}>
-                    <View style={styles.replyTopRow}>
-                      <Text style={[styles.replyHead, { color: colors.text }]}>{reply.actor} respondeu</Text>
-                      <View style={styles.replyTopActions}>
-                        <Text style={styles.replyTime}>{formatRelativeTime(reply.ts)}</Text>
-                        <Pressable
-                          hitSlop={10}
-                          style={styles.replyDeleteBtn}
-                          onPress={() =>
-                            Alert.alert('Excluir comentario', 'Deseja realmente excluir este comentario?', [
-                              { text: 'Cancelar', style: 'cancel' },
-                              {
-                                text: 'Excluir',
-                                style: 'destructive',
-                                onPress: async () => {
-                                  try {
-                                    await deleteTaskFeedPost({
-                                      rowIndex: reply.rowIndex,
-                                      ts: reply.ts,
-                                      actor: resident,
-                                      postActor: reply.actor,
-                                      postContent: reply.content,
-                                      postType: reply.type,
-                                    });
-                                    await load('pull');
-                                  } catch (e) {
-                                    Alert.alert('Erro', e?.message || 'Não foi possível excluir o comentário.');
-                                  }
-                                },
-                              },
-                            ])
-                          }
-                        >
-                          <MaterialCommunityIcons name="trash-can-outline" size={14} color="#ef4444" />
-                        </Pressable>
-                      </View>
-                    </View>
-                    <Text style={[styles.replyBody, { color: colors.muted }]}>{reply.content}</Text>
-                  </View>
-                </View>
-              ))}
-            </View>
-          )}
-
-          {replyingToTs === post.ts && (
-            <View style={styles.replyComposer}>
-              <TextInput
-                value={replyText}
-                onChangeText={setReplyText}
-                placeholder="Escreva sua resposta..."
-                placeholderTextColor="#94a3b8"
-                style={[styles.replyInput, { backgroundColor: inputBg, borderColor: inputBorder, color: colors.text }]}
-              />
-              <Pressable
-                style={[styles.replySendBtn, postingReply && { opacity: 0.75 }]}
-                onPress={async () => {
-                  if (postingReply) return;
-                  if (!replyText.trim()) return;
-                  try {
-                    setPostingReply(true);
-                    await addTaskFeedComment({
-                      actor: resident,
-                      content: replyText.trim(),
-                      target: post.ts,
-                      tarefa: post.actor,
-                      parentTs: post.ts,
-                      parentActor: post.actor,
-                    });
-                    setReplyText('');
-                    setReplyingToTs('');
-                    await load('pull');
-                  } catch (e) {
-                    Alert.alert('Erro', e?.message || 'Não foi possível responder o post.');
-                  } finally {
-                    setPostingReply(false);
-                  }
-                }}
-                disabled={postingReply}
-              >
-                <MaterialCommunityIcons name={postingReply ? 'progress-clock' : 'send'} size={15} color="#fff" />
-              </Pressable>
-            </View>
-          )}
-        </View>
-      ))}
-
-      {!loading && !topLevelFeed.length && <Text style={[styles.subtitle, { color: colors.muted }]}>Sem publicações nesta semana.</Text>}
-
-      <Modal visible={photoViewerVisible} transparent animationType="fade" onRequestClose={() => setPhotoViewerVisible(false)}>
-        <View style={styles.photoViewerOverlay}>
-          <Pressable style={styles.photoViewerClose} onPress={() => setPhotoViewerVisible(false)}>
-            <MaterialCommunityIcons name="close" size={24} color="#fff" />
-          </Pressable>
-          {!!selectedFeedPhoto && <Image source={{ uri: selectedFeedPhoto }} style={styles.photoViewerImage} resizeMode="contain" />}
-        </View>
-      </Modal>
-
-    </ScrollView>
+      ) : feed.error && !feed.data ? (
+        <EmptyState icon="alert-circle-outline" title="Não deu para carregar o feed" message={feed.error.message} actionLabel="Tentar de novo" onAction={refresh} />
+      ) : !topLevel.length ? (
+        <EmptyState icon="message-text-outline" title={filter === 'all' ? 'Semana quietinha' : 'Nada por aqui'} message={filter === 'all' ? 'Seja o primeiro a postar algo.' : 'Nenhum item desse tipo nesta semana.'} />
+      ) : (
+        topLevel.map((p) => <Post key={`${p.ts}-${p.rowIndex}`} post={p} replies={repliesByTs[p.ts] || []} onChanged={refresh} feedKey={`feed:${week}`} />)
+      )}
+      {!!data.previousWeek && (
+        <Button label={`Ver semana de ${weekRangeLabel(data.previousWeek)}`} variant="outline" icon="chevron-down" onPress={() => setWeek(data.previousWeek)} full style={{ marginTop: spacing.sm }} />
+      )}
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
-  content: { padding: 16, paddingTop: 8, gap: 12, paddingBottom: 30 },
-  composerCard: { borderWidth: 1, borderRadius: 20, padding: 13, shadowColor: '#2a1d52', shadowOpacity: 0.08, shadowRadius: 9, shadowOffset: { width: 0, height: 4 }, elevation: 3 },
-  composerHead: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 10 },
-  composerAvatar: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
-  composerAvatarPhoto: { width: 36, height: 36, borderRadius: 18 },
-  composerAvatarText: { fontSize: 12, fontWeight: '900' },
-  profileEditBtn: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: '#f3e5f5', borderWidth: 1, borderColor: '#e9d5ff' },
-  composerTitle: { fontSize: 13, fontWeight: '900' },
-  composerSubtitle: { marginTop: 1, color: '#94a3b8', fontSize: 10, fontWeight: '600' },
-  filterRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 10 },
-  filterChip: { borderWidth: 1, borderColor: '#d1d5db', backgroundColor: '#fff', borderRadius: 999, paddingHorizontal: 11, paddingVertical: 6 },
-  filterChipActive: { borderColor: '#6a1b9a', backgroundColor: '#f3e5f5' },
-  filterChipText: { color: '#6b7280', fontSize: 10, fontWeight: '800' },
-  filterChipTextActive: { color: '#4a148c' },
-  commentRow: { flexDirection: 'row', gap: 8, marginBottom: 8 },
-  commentInput: { flex: 1, borderWidth: 1, borderColor: '#d1d5db', borderRadius: 12, paddingHorizontal: 11, paddingVertical: 9, color: '#111827', fontWeight: '600' },
-  attachBtn: { width: 40, height: 40, borderRadius: 12, borderWidth: 1, borderColor: '#d1d5db', alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff' },
-  sendBtn: { width: 40, height: 40, borderRadius: 12, backgroundColor: '#6a1b9a', alignItems: 'center', justifyContent: 'center' },
-  previewWrap: { marginBottom: 4, position: 'relative' },
-  previewImg: { width: '100%', height: 140, borderRadius: 10, backgroundColor: '#e5e7eb' },
-  previewRemove: { position: 'absolute', right: 8, top: 8, backgroundColor: '#fff', borderRadius: 999 },
-  feedItem: { borderWidth: 1, borderRadius: 20, padding: 13, shadowColor: '#2a1d52', shadowOpacity: 0.08, shadowRadius: 10, shadowOffset: { width: 0, height: 4 }, elevation: 3 },
-  feedSkeleton: { borderWidth: 1, borderRadius: 20, padding: 13 },
-  feedSkeletonHead: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
-  skeletonAvatar: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#ececf1' },
-  skeletonLineLg: { width: '62%', height: 10, borderRadius: 5, backgroundColor: '#ececf1', marginBottom: 6 },
-  skeletonLineSm: { width: '32%', height: 8, borderRadius: 4, backgroundColor: '#ececf1' },
-  skeletonLineFull: { width: '92%', height: 9, borderRadius: 5, backgroundColor: '#ececf1', marginBottom: 8 },
-  skeletonImage: { width: '100%', height: 150, borderRadius: 10, backgroundColor: '#ececf1' },
-  feedHeadRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
-  feedAuthorRow: { flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 },
-  feedAvatar: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center' },
-  feedAvatarPhoto: { width: 38, height: 38, borderRadius: 19 },
-  feedAvatarText: { fontSize: 13, fontWeight: '900' },
-  feedActions: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  feedHead: { fontSize: 13, fontWeight: '900' },
-  feedMetaRow: { marginTop: 2, flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
-  postTypePill: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999 },
-  postTypeText: { fontSize: 10, fontWeight: '800' },
-  feedTime: { marginTop: 2, fontSize: 10, color: '#9ca3af', fontWeight: '700' },
-  feedReplyBtn: { width: 26, height: 26, borderRadius: 13, alignItems: 'center', justifyContent: 'center', backgroundColor: '#f3e5f5' },
-  feedDeleteBtn: { width: 24, height: 24, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
-  feedHighlight: { marginTop: 8, fontSize: 12, fontWeight: '800' },
-  feedBody: { fontSize: 12, marginTop: 4, fontWeight: '600', lineHeight: 18 },
-  feedPhoto: { width: '100%', height: 190, borderRadius: 10, marginTop: 8, backgroundColor: '#e5e7eb' },
-  feedFooterBar: { marginTop: 9, paddingTop: 8, borderTopWidth: 1, borderTopColor: '#ede9fe', flexDirection: 'row', alignItems: 'center', gap: 8 },
-  feedFooterAction: { flex: 1, minHeight: 35, borderRadius: 11, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#e5e7eb' },
-  feedFooterActionActive: { backgroundColor: '#f3e8ff', borderColor: '#d8b4fe' },
-  feedFooterText: { color: '#94a3b8', fontSize: 10, fontWeight: '700' },
-  feedFooterTextActive: { color: '#6a1b9a' },
-  replyTimeline: { marginTop: 8, marginLeft: 6, paddingLeft: 14, position: 'relative' },
-  replyTimelineLine: { position: 'absolute', left: 4, top: 2, bottom: 2, width: 2, backgroundColor: '#ddd6fe' },
-  replyTimelineItem: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, marginBottom: 8 },
-  replyDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: '#7e57c2', marginTop: 6, marginLeft: -15 },
-  replyBubble: { flex: 1, borderWidth: 1, borderColor: '#ede9fe', backgroundColor: '#faf5ff', borderRadius: 14, paddingHorizontal: 10, paddingVertical: 8 },
-  replyTopRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
-  replyTopActions: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  replyHead: { fontSize: 11, fontWeight: '800' },
-  replyTime: { fontSize: 10, color: '#9ca3af', fontWeight: '700' },
-  replyDeleteBtn: { width: 20, height: 20, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
-  replyBody: { fontSize: 11, marginTop: 2, fontWeight: '600' },
-  replyComposer: { marginTop: 8, flexDirection: 'row', gap: 6, alignItems: 'center' },
-  replyInput: { flex: 1, borderWidth: 1, borderColor: '#d1d5db', borderRadius: 12, paddingHorizontal: 10, paddingVertical: 8, color: '#111827', fontWeight: '600' },
-  replySendBtn: { width: 36, height: 36, borderRadius: 12, backgroundColor: '#6a1b9a', alignItems: 'center', justifyContent: 'center' },
-  photoViewerOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.94)', justifyContent: 'center', alignItems: 'center', padding: 14 },
-  photoViewerClose: { position: 'absolute', top: 52, right: 16, zIndex: 3, width: 38, height: 38, borderRadius: 19, backgroundColor: 'rgba(0,0,0,0.45)', alignItems: 'center', justifyContent: 'center' },
-  photoViewerImage: { width: '100%', height: '78%', borderRadius: 12 },
-  subtitle: { marginTop: 4, fontSize: 12, fontWeight: '600' },
-  error: { color: '#ef4444', fontWeight: '700', marginBottom: 2 },
-  offlineHint: { color: '#b45309', fontWeight: '700', marginBottom: 2 },
-  retryBtn: { alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#6a1b9a', borderRadius: 12, paddingHorizontal: 11, paddingVertical: 8, marginBottom: 6 },
-  retryBtnText: { color: '#fff', fontSize: 11, fontWeight: '800' },
-  progressText: { fontSize: 11, fontWeight: '800' },
-  rowBetween: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
-  title: { fontSize: 17, fontWeight: '800', marginBottom: 7 },
+  row: { flexDirection: 'row', alignItems: 'center' },
+  filters: { flexDirection: 'row', flexWrap: 'wrap' },
+  composerInput: { flex: 1, minHeight: 44, maxHeight: 140, paddingVertical: 10 },
+  replyInput: { flex: 1, minHeight: 44, paddingVertical: 10 },
+  action: { flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 44, minWidth: 44, paddingHorizontal: 8, justifyContent: 'center' },
+  anon: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
 });
-

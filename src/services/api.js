@@ -1,103 +1,78 @@
 import Constants from 'expo-constants';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { NativeModules } from 'react-native';
+import { NativeModules, Platform } from 'react-native';
+import { makeRequestId } from '../utils/text';
 
-const hostFromExpo =
-  String(Constants?.expoConfig?.hostUri || Constants?.manifest2?.extra?.expoGo?.debuggerHost || '')
-    .split(':')[0]
-    .trim();
-const hostFromManifest =
-  String(Constants?.manifest?.debuggerHost || Constants?.manifest?.hostUri || '')
-    .split(':')[0]
-    .trim();
-const hostFromScriptUrl = String(NativeModules?.SourceCode?.scriptURL || '')
-  .replace('http://', '')
-  .replace('https://', '')
-  .split('/')[0]
-  .split(':')[0]
-  .trim();
-const webOrigin =
-  typeof window !== 'undefined' && window?.location?.origin
-    ? String(window.location.origin).trim()
-    : '';
-/** Prévia estática em 127.0.0.1/localhost: usa /api no mesmo host (proxy em scripts/web-preview.cjs), mesmo com EXPO_PUBLIC_API_URL de produção no bundle. */
-const isLoopbackWeb =
-  typeof window !== 'undefined' &&
-  (window.location?.hostname === '127.0.0.1' || window.location?.hostname === 'localhost');
-const loopbackSameOriginApi = isLoopbackWeb && webOrigin ? `${webOrigin}/api` : '';
+/* ----------------------------------------------------------------------
+ * Descoberta da API
+ * - Produção (GitHub Pages): só EXPO_PUBLIC_API_URL (Render).
+ * - Prévia local (127.0.0.1/localhost): /api da mesma origem (proxy do preview:web).
+ * - Expo Go: IP do computador na porta 4000.
+ * -------------------------------------------------------------------- */
+
 const FALLBACK_REMOTE_API = 'https://tocah-do-coelho-app.onrender.com/api';
 
 function normalizeApiBase(raw = '') {
-  const value = String(raw || '').trim();
-  if (!value) return '';
-  return value.replace(/\/+$/, '');
+  return String(raw || '').trim().replace(/\/+$/, '');
 }
 
-const API_URL =
-  loopbackSameOriginApi ||
-  normalizeApiBase(process.env.EXPO_PUBLIC_API_URL) ||
-  (webOrigin ? `${webOrigin}/api` : '') ||
-  FALLBACK_REMOTE_API ||
-  (hostFromExpo ? `http://${hostFromExpo}:4000/api` : '') ||
-  'http://localhost:4000/api';
+function hostOnly(raw) {
+  return String(raw || '').replace(/^https?:\/\//, '').split('/')[0].split(':')[0].trim();
+}
 
 function isValidHost(raw = '') {
   const host = String(raw || '').trim();
-  if (!host) return false;
   if (host === 'localhost') return true;
-  const ipv4 = host.match(/^(\d{1,3})(\.\d{1,3}){3}$/);
-  if (!ipv4) return false;
-  return host.split('.').every((part) => {
-    const n = Number(part);
-    return Number.isFinite(n) && n >= 0 && n <= 255;
-  });
+  if (!/^(\d{1,3})(\.\d{1,3}){3}$/.test(host)) return false;
+  return host.split('.').every((part) => Number(part) >= 0 && Number(part) <= 255);
 }
 
-const API_BASE_CANDIDATES = Array.from(
+const isWeb = Platform.OS === 'web' && typeof window !== 'undefined';
+const isLoopbackWeb = isWeb && ['127.0.0.1', 'localhost'].includes(window.location?.hostname);
+const loopbackSameOriginApi = isLoopbackWeb ? `${window.location.origin}/api` : '';
+const envApi = normalizeApiBase(process.env.EXPO_PUBLIC_API_URL);
+const devHosts = isWeb
+  ? []
+  : [
+      hostOnly(Constants?.expoConfig?.hostUri || Constants?.manifest2?.extra?.expoGo?.debuggerHost),
+      hostOnly(Constants?.manifest?.debuggerHost || Constants?.manifest?.hostUri),
+      hostOnly(NativeModules?.SourceCode?.scriptURL),
+    ].filter(isValidHost);
+
+// Na prévia local, nunca cair para o Render: evita gravar na planilha de produção sem querer.
+const API_BASE_CANDIDATES = isLoopbackWeb ? [loopbackSameOriginApi] : Array.from(
   new Set(
     [
       loopbackSameOriginApi,
-      normalizeApiBase(process.env.EXPO_PUBLIC_API_URL),
+      envApi,
+      ...devHosts.map((h) => `http://${h}:4000/api`),
       FALLBACK_REMOTE_API,
-      webOrigin ? `${webOrigin}/api` : '',
-      isValidHost(hostFromExpo) ? `http://${hostFromExpo}:4000/api` : '',
-      isValidHost(hostFromManifest) ? `http://${hostFromManifest}:4000/api` : '',
-      isValidHost(hostFromScriptUrl) ? `http://${hostFromScriptUrl}:4000/api` : '',
-      'http://localhost:4000/api',
-    ].map((base) => normalizeApiBase(base)).filter(Boolean)
+      isWeb ? '' : 'http://localhost:4000/api',
+    ].map(normalizeApiBase).filter(Boolean)
   )
 );
 
-let preferredApiBase = API_URL;
-const CACHE_KEY_PREFIX = '@tocah_api_cache:';
-const MAX_CACHE_AGE_MS = 1000 * 60 * 60 * 24; // 24h
-let connectionStatus = {
-  online: true,
-  source: 'network',
-  message: '',
-  cachedAt: '',
-  apiBase: API_URL,
-  updatedAt: '',
-};
+let preferredApiBase = API_BASE_CANDIDATES[0];
+
+/* ----------------------------------------------------------------------
+ * Status de conexão (para o banner offline / "acordando o servidor")
+ * -------------------------------------------------------------------- */
+
+let connectionStatus = { online: true, source: 'network', waking: false, message: '', cachedAt: '', apiBase: preferredApiBase, updatedAt: '' };
 const connectionListeners = new Set();
 
-function notifyConnectionStatus() {
+function updateConnectionStatus(next = {}) {
+  const merged = { ...connectionStatus, ...next, updatedAt: new Date().toISOString() };
+  const changed = ['online', 'source', 'waking', 'message', 'cachedAt'].some((k) => merged[k] !== connectionStatus[k]);
+  connectionStatus = merged;
+  if (!changed) return;
   connectionListeners.forEach((listener) => {
     try {
       listener(connectionStatus);
     } catch {
-      // Ignore listener errors to keep network flow stable.
+      // listener com erro não derruba a rede
     }
   });
-}
-
-function updateConnectionStatus(next = {}) {
-  connectionStatus = {
-    ...connectionStatus,
-    ...next,
-    updatedAt: new Date().toISOString(),
-  };
-  notifyConnectionStatus();
 }
 
 export function getApiConnectionStatus() {
@@ -108,369 +83,218 @@ export function subscribeApiConnectionStatus(listener) {
   if (typeof listener !== 'function') return () => {};
   connectionListeners.add(listener);
   listener({ ...connectionStatus });
-  return () => {
-    connectionListeners.delete(listener);
-  };
+  return () => connectionListeners.delete(listener);
 }
 
-function buildCacheKey(url) {
-  try {
-    const parsed = new URL(String(url || ''));
-    return `${CACHE_KEY_PREFIX}${parsed.pathname}${parsed.search}`;
-  } catch {
-    return `${CACHE_KEY_PREFIX}${String(url || '').trim()}`;
-  }
+/* ----------------------------------------------------------------------
+ * Cache offline (AsyncStorage, 24h)
+ * -------------------------------------------------------------------- */
+
+const CACHE_KEY_PREFIX = '@tocah_api_cache:';
+const MAX_CACHE_AGE_MS = 1000 * 60 * 60 * 24;
+
+function cacheKey(query) {
+  return `${CACHE_KEY_PREFIX}${query}`;
 }
 
-/** YYYY-MM no fuso da república — muda na virada do mês e evita reusar cache do AsyncStorage com aba antiga. */
-function financeMonthRefQuery() {
+export async function readCachedQuery(query) {
   try {
-    const ymd = new Intl.DateTimeFormat('en-CA', {
-      timeZone: 'America/Sao_Paulo',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-    }).format(new Date());
-    const ym = String(ymd || '').slice(0, 7);
-    if (/^\d{4}-\d{2}$/.test(ym)) return `refYm=${encodeURIComponent(ym)}`;
-  } catch {
-    // ignore
-  }
-  const d = new Date();
-  return `refYm=${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-}
-
-async function readCachedPayload(url) {
-  try {
-    const raw = await AsyncStorage.getItem(buildCacheKey(url));
+    const raw = await AsyncStorage.getItem(cacheKey(query));
     if (!raw) return null;
     const parsed = JSON.parse(raw);
-    if (!parsed?.savedAt || typeof parsed?.payload === 'undefined') return null;
-    const ageMs = Date.now() - new Date(parsed.savedAt).getTime();
-    if (!Number.isFinite(ageMs) || ageMs < 0 || ageMs > MAX_CACHE_AGE_MS) return null;
+    const age = Date.now() - new Date(parsed?.savedAt).getTime();
+    if (!Number.isFinite(age) || age < 0 || age > MAX_CACHE_AGE_MS) return null;
     return parsed;
   } catch {
     return null;
   }
 }
 
-async function saveCachedPayload(url, payload) {
+async function saveCachedQuery(query, payload) {
   try {
-    await AsyncStorage.setItem(
-      buildCacheKey(url),
-      JSON.stringify({
-        savedAt: new Date().toISOString(),
-        payload,
-      })
-    );
+    await AsyncStorage.setItem(cacheKey(query), JSON.stringify({ savedAt: new Date().toISOString(), payload }));
   } catch {
-    // Cache failure should not block app usage.
+    // cache cheio (fotos) não pode travar o app
   }
 }
 
-export function getApiDebugInfo() {
-  return {
-    preferredApiBase,
-    candidates: API_BASE_CANDIDATES,
-    envApiUrl: process.env.EXPO_PUBLIC_API_URL || '',
-    hostFromExpo,
-    hostFromManifest,
-    hostFromScriptUrl,
-  };
+/* ----------------------------------------------------------------------
+ * HTTP
+ * -------------------------------------------------------------------- */
+
+class ApiError extends Error {
+  constructor(message, { status = 0, code = '', network = false, data = null } = {}) {
+    super(message);
+    this.status = status;
+    this.code = code;
+    this.network = network;
+    this.data = data;
+  }
 }
 
-export function setPreferredApiBase(nextBase) {
-  if (nextBase) preferredApiBase = normalizeApiBase(nextBase);
-}
+const WAKING_HINT_MS = 4000;
 
-function mapUrlToBase(url, base) {
-  if (url.startsWith(API_URL)) return url.replace(API_URL, base);
-  if (url.startsWith(preferredApiBase)) return url.replace(preferredApiBase, base);
-  return url;
-}
-
-function toHealthUrl(base) {
-  const trimmed = String(base || '').replace(/\/+$/, '');
-  return `${trimmed.replace(/\/api$/, '')}/health`;
-}
-
-async function fetchJson(url, init) {
-  const controller = new AbortController();
-  const method = String(init?.method || 'GET').toUpperCase();
-  const bodyLength = typeof init?.body === 'string' ? init.body.length : 0;
-  const timeoutMs = method === 'POST'
-    ? (bodyLength > 200000 ? 35000 : 18000)
-    : 18000;
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+async function fetchJson(url, init = {}, timeoutMs = 20000) {
+  const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timer = setTimeout(() => controller?.abort(), timeoutMs);
+  const wakingTimer = setTimeout(() => updateConnectionStatus({ waking: true }), WAKING_HINT_MS);
   let res;
   try {
-    res = await fetch(url, { ...(init || {}), signal: controller.signal });
+    res = await fetch(url, { ...init, signal: controller?.signal });
   } catch (error) {
-    if (error?.name === 'AbortError') {
-      throw new Error(`Tempo esgotado ao conectar com a API em ${url}`);
-    }
-    throw error;
+    const aborted = error?.name === 'AbortError';
+    throw new ApiError(aborted ? 'O servidor demorou para responder.' : 'Sem conexão com o servidor.', { network: true });
   } finally {
-    clearTimeout(timeout);
+    clearTimeout(timer);
+    clearTimeout(wakingTimer);
   }
   const text = await res.text();
   let data = {};
   try {
     data = text ? JSON.parse(text) : {};
   } catch {
-    throw new Error(`Resposta invalida da API em ${url}`);
+    throw new ApiError('Resposta inválida do servidor.', { status: res.status, network: res.status >= 500 || res.status === 404 });
   }
   if (!res.ok || data?.ok === false) {
-    throw new Error(data?.message || `Falha ao buscar dados em ${url}`);
+    throw new ApiError(data?.message || `Erro ${res.status} no servidor.`, { status: res.status, code: data?.code || '', data });
   }
   return data;
 }
 
-async function sleep(ms) {
-  await new Promise((resolve) => setTimeout(resolve, ms));
-}
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function requestJson(url) {
+/** Tenta as bases candidatas SÓ quando a falha é de rede. Erro HTTP (400/409...) volta direto com a mensagem do servidor. */
+async function requestWithFallback(pathAndQuery, init, { timeoutMs, retries }) {
   const candidates = [preferredApiBase, ...API_BASE_CANDIDATES.filter((b) => b !== preferredApiBase)];
   let lastError = null;
   for (const base of candidates) {
-    const candidateUrl = mapUrlToBase(url, base);
-    try {
-      const data = await fetchJson(candidateUrl);
-      preferredApiBase = base;
-      updateConnectionStatus({
-        online: true,
-        source: 'network',
-        message: '',
-        cachedAt: '',
-        apiBase: base,
-      });
-      await saveCachedPayload(url, data);
-      return data;
-    } catch (error) {
-      lastError = error;
-      const transient = /Tempo esgotado|Network request failed|Failed to fetch/i.test(String(error?.message || ''));
-      if (transient) {
-        try {
-          await sleep(1200);
-          const retryData = await fetchJson(candidateUrl);
-          preferredApiBase = base;
-          updateConnectionStatus({
-            online: true,
-            source: 'network',
-            message: '',
-            cachedAt: '',
-            apiBase: base,
-          });
-          await saveCachedPayload(url, retryData);
-          return retryData;
-        } catch (retryError) {
-          lastError = retryError;
+    for (let attempt = 0; attempt <= retries; attempt += 1) {
+      try {
+        const data = await fetchJson(`${base}${pathAndQuery}`, init, timeoutMs + attempt * 15000);
+        preferredApiBase = base;
+        updateConnectionStatus({ online: true, source: 'network', waking: false, message: '', cachedAt: '', apiBase: base });
+        return data;
+      } catch (error) {
+        lastError = error;
+        if (!error.network) {
+          updateConnectionStatus({ online: true, waking: false });
+          throw error;
         }
+        if (attempt < retries) await sleep(1500 * (attempt + 1));
       }
     }
   }
-  const cached = await readCachedPayload(url);
-  if (cached) {
-    updateConnectionStatus({
-      online: false,
-      source: 'cache',
-      message: 'API indisponivel. Exibindo ultima consulta salva.',
-      cachedAt: cached.savedAt,
-      apiBase: preferredApiBase,
-    });
-    return cached.payload;
-  }
-  updateConnectionStatus({
-    online: false,
-    source: 'offline',
-    message: 'Sem conexao com API/planilha no momento.',
-    cachedAt: '',
-    apiBase: preferredApiBase,
-  });
-  if (String(lastError?.message || '').includes('Network request failed')) {
-    throw new Error(`Sem conexao com a API (${preferredApiBase}). Verifique backend e IP local.`);
-  }
-  throw lastError || new Error('Falha ao buscar dados da API.');
+  throw lastError || new ApiError('Sem conexão com o servidor.', { network: true });
 }
 
-async function postJson(body) {
-  const candidates = [preferredApiBase, ...API_BASE_CANDIDATES.filter((b) => b !== preferredApiBase)];
-  let lastError = null;
-  for (const base of candidates) {
-    try {
-      const data = await fetchJson(base, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      preferredApiBase = base;
-      updateConnectionStatus({
-        online: true,
-        source: 'network',
-        message: '',
-        cachedAt: '',
-        apiBase: base,
-      });
-      return data;
-    } catch (error) {
-      lastError = error;
-      const transient = /Tempo esgotado|Network request failed|Failed to fetch/i.test(String(error?.message || ''));
-      if (transient) {
-        try {
-          await sleep(1200);
-          const retryData = await fetchJson(base, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body),
-          });
-          preferredApiBase = base;
-          updateConnectionStatus({
-            online: true,
-            source: 'network',
-            message: '',
-            cachedAt: '',
-            apiBase: base,
-          });
-          return retryData;
-        } catch (retryError) {
-          lastError = retryError;
-        }
-      }
+// Sem URLSearchParams: no React Native ele é incompleto (.set não existe em algumas versões).
+function buildQuery(action, params = {}) {
+  const parts = [`action=${encodeURIComponent(action)}`];
+  Object.keys(params).forEach((k) => {
+    const v = params[k];
+    if (v !== undefined && v !== null && v !== '') parts.push(`${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`);
+  });
+  return parts.join('&');
+}
+
+/** GET com cache offline: se a rede falhar, devolve a última resposta salva e marca o app como offline. */
+async function getAction(action, params, { cache = true, timeoutMs = 20000 } = {}) {
+  const query = buildQuery(action, params);
+  try {
+    const data = await requestWithFallback(`?${query}`, { method: 'GET' }, { timeoutMs, retries: 1 });
+    if (cache) saveCachedQuery(query, data);
+    return data;
+  } catch (error) {
+    if (!error.network) throw error;
+    if (!cache) {
+      // Chamada leve (sync/fotos): não muda o banner para "sem dados"; as telas continuam com o que já têm.
+      updateConnectionStatus({ online: false, source: 'cache', waking: false, message: 'Sem conexão. Mostrando os últimos dados salvos.' });
+      throw error;
     }
-  }
-  updateConnectionStatus({
-    online: false,
-    source: 'offline',
-    message: 'Sem conexao com API/planilha no momento.',
-    cachedAt: '',
-    apiBase: preferredApiBase,
-  });
-  if (String(lastError?.message || '').includes('Network request failed')) {
-    throw new Error(`Sem conexao com a API (${preferredApiBase}). Verifique backend e IP local.`);
-  }
-  throw lastError || new Error('Falha na requisicao.');
-}
-
-function normalizeEntryType(entryType = '') {
-  const raw = String(entryType || '').trim();
-  const map = {
-    contaFixa: 'conta_fixa',
-    gastoColetivo: 'gasto_coletivo',
-    acertoIndividual: 'acerto_individual',
-    conta_fixa: 'conta_fixa',
-    gasto_coletivo: 'gasto_coletivo',
-    acerto_individual: 'acerto_individual',
-  };
-  return map[raw] || raw;
-}
-
-function toSheetBool(value) {
-  if (typeof value === 'boolean') return value ? 'TRUE' : 'FALSE';
-  const normalized = String(value || '').trim().toUpperCase();
-  return normalized === 'TRUE' ? 'TRUE' : 'FALSE';
-}
-
-export async function getFinanceSnapshot() {
-  return requestJson(`${API_URL}?action=getFinanceSnapshot&${financeMonthRefQuery()}`);
-}
-
-export async function getApiHealth() {
-  const candidates = [preferredApiBase, ...API_BASE_CANDIDATES.filter((b) => b !== preferredApiBase)];
-  let lastError = null;
-  for (const base of candidates) {
-    try {
-      const data = await fetchJson(toHealthUrl(base));
-      preferredApiBase = base;
-      const sheetsOk = data?.sheets?.ok !== false;
-      updateConnectionStatus({
-        online: Boolean(data?.ok) && sheetsOk,
-        source: sheetsOk ? 'network' : 'degraded',
-        message: sheetsOk ? '' : (data?.sheets?.message || 'API online, mas sem conexao com a planilha.'),
-        cachedAt: '',
-        apiBase: base,
-      });
-      return data;
-    } catch (error) {
-      lastError = error;
+    const cached = await readCachedQuery(query);
+    if (cached) {
+      updateConnectionStatus({ online: false, source: 'cache', waking: false, message: 'Sem conexão. Mostrando os últimos dados salvos.', cachedAt: cached.savedAt });
+      return cached.payload;
     }
+    updateConnectionStatus({ online: false, source: 'offline', waking: false, message: 'Sem conexão com o servidor no momento.', cachedAt: '' });
+    throw error;
   }
-  updateConnectionStatus({
-    online: false,
-    source: 'offline',
-    message: 'API indisponivel. Sem validacao de conexao com planilha.',
-    cachedAt: '',
-    apiBase: preferredApiBase,
-  });
-  throw lastError || new Error('Falha ao verificar saude da API.');
 }
 
-export async function addFinanceEntry({ entryType, usuario, payload }) {
-  return postJson({ action: 'addFinanceEntry', entryType: normalizeEntryType(entryType), usuario, payload });
+/**
+ * POST com requestId: o backend nunca grava duas vezes o mesmo pedido,
+ * então é seguro tentar de novo quando o Render está "acordando" (plano grátis).
+ */
+async function postAction(action, body = {}, { timeoutMs = 30000 } = {}) {
+  const payload = JSON.stringify({ action, requestId: makeRequestId(), ...body });
+  try {
+    return await requestWithFallback('', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: payload }, { timeoutMs, retries: 2 });
+  } catch (error) {
+    if (error.network) {
+      updateConnectionStatus({ online: false, source: 'offline', waking: false, message: 'Sem conexão com o servidor no momento.' });
+      throw new ApiError('Não deu para salvar: sem conexão com o servidor. Tente de novo em instantes.', { network: true });
+    }
+    throw error;
+  }
 }
 
-export async function updateFinanceEntry({ entryType, rowIndex, payload }) {
-  return postJson({ action: 'updateFinanceEntry', entryType: normalizeEntryType(entryType), rowIndex, payload });
+export function isConflict(error) {
+  return error?.status === 409;
 }
 
-export async function deleteFinanceEntry({ entryType, rowIndex, match = {} }) {
-  return postJson({ action: 'deleteFinanceEntry', entryType: normalizeEntryType(entryType), rowIndex, match });
-}
+/* ----------------------------------------------------------------------
+ * Endpoints
+ * -------------------------------------------------------------------- */
 
-export async function toggleContaStatus({ rowIndex, status }) {
-  return postJson({ action: 'toggleContaStatus', rowIndex, status: toSheetBool(status) });
-}
+/** Mesma query usada no cache offline: permite mostrar o último dado salvo na hora. */
+export const queryFor = buildQuery;
 
-export async function getDados(usuario = 'GUILHERME') {
-  return requestJson(
-    `${API_URL}?action=getDados&usuario=${encodeURIComponent(usuario)}&${financeMonthRefQuery()}`
-  );
-}
+export const getSyncState = () => getAction('getSyncState', {}, { cache: false, timeoutMs: 15000 });
+export const getApiHealth = () => fetchJson(`${preferredApiBase.replace(/\/api$/, '')}/health`);
+export const getConfig = () => getAction('getConfig');
+export const ensureConfig = () => postAction('ensureConfig');
 
-export async function getCaixinha() {
-  return requestJson(`${API_URL}?action=getCaixinha`);
-}
+// Finanças
+export const getFinanceSnapshot = (sheet = '') => getAction('getFinanceSnapshot', { sheet });
+export const getSettledHistory = () => getAction('getSettledHistory');
+export const updateFinanceEntry = ({ entryType, rowIndex, payload, expected, expectedSheet }) =>
+  postAction('updateFinanceEntry', { entryType, rowIndex, payload, expected, expectedSheet });
+export const deleteFinanceEntry = ({ entryType, rowIndex, expected, expectedSheet, cascade = false }) =>
+  postAction('deleteFinanceEntry', { entryType, rowIndex, expected, expectedSheet, cascade });
+export const toggleContaStatus = ({ rowIndex, status, expected, expectedSheet }) =>
+  postAction('toggleContaStatus', { rowIndex, status: status ? 'TRUE' : 'FALSE', expected, expectedSheet });
+export const addCollectiveExpense = (data) => postAction('addCollectiveExpense', data);
+export const updateCollectiveExpense = (data) => postAction('updateCollectiveExpense', data);
+export const addSettlements = (data) => postAction('addSettlements', data);
+export const settleAcerto = (data) => postAction('settleAcerto', data);
 
-export async function getCaixinhaStatement() {
-  return requestJson(`${API_URL}?action=getCaixinhaStatement`);
-}
+// Caixinha
+export const getCaixinha = () => getAction('getCaixinha');
+export const getCaixinhaStatement = () => getAction('getCaixinhaStatement');
+export const addCaixinhaEntry = ({ tipo, descricao, valor, obs = '', autor = '' }) => postAction('addCaixinhaEntry', { tipo, descricao, valor, obs, autor });
 
-export async function getTarefaSemana(usuario = 'GUILHERME') {
-  return requestJson(`${API_URL}?action=getTarefaSemana&usuario=${encodeURIComponent(usuario)}`);
-}
+// Tarefas
+export const getTarefaSemana = (usuario) => getAction('getTarefaSemana', { usuario });
+export const getEscalaSemana = () => getAction('getEscalaSemana');
+export const getTaskRatings = (actor) => getAction('getTaskRatings', { strict: 1, actor, history: 0 });
+export const concluirTarefa = ({ usuario, tarefaNome = '', photoDataUrl }) =>
+  postAction('concluirTarefa', { usuario, tarefaNome, photoDataUrl, once: true }, { timeoutMs: 45000 });
+export const rateTask = ({ actor, target, tarefa, nota, comentario = '', categoria = 'casa' }) =>
+  postAction('rateTask', { actor, target, tarefa, nota, comentario, categoria });
 
-export async function getEscalaSemana() {
-  return requestJson(`${API_URL}?action=getEscalaSemana`);
-}
+// Feed
+export const getTaskFeed = (week = '') => getAction('getTaskFeed', { strict: 1, photos: 0, likes: 1, week });
+export const getFeedPhoto = (ts) => getAction('getFeedPhoto', { ts }, { cache: false });
+export const addTaskFeedComment = ({ actor, content, target = '', tarefa = '', photoDataUrl = '', parentTs = '', parentActor = '' }) =>
+  postAction('addTaskFeedComment', { actor, content, target, tarefa, photoDataUrl, parentTs, parentActor }, { timeoutMs: 45000 });
+export const deleteTaskFeedPost = ({ ts, requester }) => postAction('deleteTaskFeedPost', { ts, requester });
+export const toggleFeedLike = ({ ts, actor }) => postAction('toggleFeedLike', { ts, actor });
 
-export async function getTaskRatings() {
-  return requestJson(`${API_URL}?action=getTaskRatings`);
-}
+// Nilde
+export const getNildeWeek = () => getAction('getNildeWeek');
+export const checkNilde = ({ actor, slotId, comment = '', photoDataUrl = '' }) =>
+  postAction('checkNilde', { actor, slotId, comment, photoDataUrl }, { timeoutMs: 45000 });
 
-export async function getTaskFeed() {
-  return requestJson(`${API_URL}?action=getTaskFeed`);
-}
-
-export async function concluirTarefa(tarefaNome, usuario = 'GUILHERME', photoDataUrl = '') {
-  return postJson({ action: 'concluirTarefa', tarefaNome, usuario, photoDataUrl });
-}
-
-export async function triggerAdminAction(action, usuario = 'ADMIN') {
-  return postJson({ action, usuario });
-}
-
-export async function addCaixinhaEntry({ tipo, descricao, valor, obs = '' }) {
-  return postJson({ action: 'addCaixinhaEntry', tipo, descricao, valor, obs });
-}
-
-export async function rateTask({ actor, target, tarefa, nota, comentario = '', categoria = 'casa' }) {
-  return postJson({ action: 'rateTask', actor, target, tarefa, nota, comentario, categoria });
-}
-
-export async function addTaskFeedComment({ actor, content, target = '', tarefa = '', photoDataUrl = '', parentTs = '', parentActor = '' }) {
-  return postJson({ action: 'addTaskFeedComment', actor, content, target, tarefa, photoDataUrl, parentTs, parentActor });
-}
-
-export async function deleteTaskFeedPost({ rowIndex, ts = '', actor, postActor = '', postContent = '', postType = '' }) {
-  return postJson({ action: 'deleteTaskFeedPost', rowIndex, ts, actor, postActor, postContent, postType });
-}
+// Perfis
+export const getProfiles = () => getAction('getProfiles');
+export const setProfilePhoto = ({ nome, photoDataUrl }) => postAction('setProfilePhoto', { nome, photoDataUrl }, { timeoutMs: 45000 });
