@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { Screen } from '../components/Screen';
-import { AvaliarTab, DeliveryCard, DesempenhoTab, EntregasCard, GaleriaEntrega } from '../components/tasks';
+import { AvaliarTab, DeliveryCard, DesempenhoTab, EntregasCard, GaleriaEntrega, NotasAoVivoCard } from '../components/tasks';
 import { ADMIN, AdminTab } from '../components/admin';
 import { sameName } from '../utils/text';
 import { AppText, BottomSheet, Card, Chip, Icon, SkeletonCard } from '../components/ui';
@@ -65,6 +65,7 @@ export function TasksScreen() {
               </View>
             </Card>
           )}
+          {emAvaliacao && <NotasAoVivoCard ciclo={emAvaliacao} />}
           {anteriorPendente && <EntregasCard ciclo={anteriorPendente} titulo={`Semana passada · ${anteriorPendente.periodo}`} me={resident} onPhoto={setPhotoList} />}
           {data?.atual && <EntregasCard ciclo={data.atual} titulo="Entregas desta semana" me={resident} onPhoto={setPhotoList} />}
           <Card onPress={() => navigation.navigate('Nilde')} variant="primary" accessibilityLabel="Abrir Nilde">

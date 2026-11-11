@@ -694,8 +694,9 @@ async function cycleState(ctx, key, now = Date.now()) {
 function publicCycle(state, { usuario = '', revelarNotas = false, results = null } = {}) {
   if (!state) return null;
   const me = norm(usuario);
-  const { _rows, ...rest } = state;
+  const { _rows, _expected, ...rest } = state;
   const out = { ...rest, residents: state.residents.map((r) => ({ ...r })) };
+  if (state.phase !== 'entregas') out.notasAoVivo = ciclo.notasAoVivo(state);
   if (me) out.ratedByMe = ciclo.ratedMap(_rows, usuario);
   if (revelarNotas && results) {
     out.resultados = results.map((r) => ({ ...r, comentarios: norm(r.nome) === me ? r.comentarios : undefined }));
@@ -959,8 +960,8 @@ const getActions = {
     for (const key of keys) {
       if (key < ctx.inicio && key !== atualKey) continue;
       const st = await cycleState(ctx, key, now);
-      const { _rows, ...rest } = st;
-      semanas.push({ ...rest, futura: key > atualKey });
+      const { _rows, _expected, ...rest } = st;
+      semanas.push({ ...rest, futura: key > atualKey, notasAoVivo: st.phase !== 'entregas' ? ciclo.notasAoVivo(st) : null });
     }
     const titles = await getSpreadsheetTitles();
     const multasRows = titles.includes(MULTAS_SHEET) ? (await readRangeOrEmpty(`${MULTAS_SHEET}!A:G`, { fresh: true })).slice(1) : [];
@@ -1995,6 +1996,12 @@ function paginaAvaliacao({ token, actor, state, rules, msg = '', erro = '', alvo
     </section>`;
   }).join('');
   const faltaram = state.residents.filter((r) => r.status !== 'entregue' && r.nome !== actor);
+  const fmtNota = (v) => (v === null || v === undefined ? '—' : Number(v).toFixed(1).replace('.', ','));
+  const aoVivo = state.phase === 'entregas' ? '' : `<section class="card"><div class="ov">Notas ao vivo</div>
+    <div class="muted small" style="margin:2px 0 8px">Média das notas recebidas até agora (anônimas). Atualiza sozinho.</div>
+    ${ciclo.notasAoVivo(state).map((n) => `<div class="row live"><div class="av sm">${esc(n.nome.charAt(0))}</div><div class="grow"><b>${esc(nomeCurto(n.nome))}</b>
+      <div class="muted small" style="margin:0">${n.status === 'entregue' ? `${n.notas} de ${n.esperadas} notas${n.esperadasBanheirao ? ` · banheirão ${fmtNota(n.mediaBanheirao)} (${n.notasBanheirao}/${n.esperadasBanheirao})` : ''}` : n.status === 'dispensado' ? 'dispensado' : 'não entregou'}</div>
+      <div class="mini"><div style="width:${n.media ? Math.round((n.media / 5) * 100) : 0}%"></div></div></div><div class="nota">★ ${fmtNota(n.media)}</div></div>`).join('')}</section>`;
   const titulo = state.phase === 'encerrada' ? 'Avaliação encerrada' : state.phase === 'entregas' ? 'Avaliação ainda não abriu' : prog.feitas >= prog.total ? 'Você avaliou todo mundo 🎉' : `Faltam ${prog.total - prog.feitas} de ${prog.total} notas`;
   return `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex">
 <title>Avaliação da semana · Tocah</title><style>
@@ -2022,12 +2029,15 @@ textarea{width:100%;margin-top:10px;min-height:70px;border-radius:14px;border:1p
 button{width:100%;margin-top:10px;min-height:48px;border:0;border-radius:16px;background:var(--p);color:#fff;font:inherit;font-weight:900;font-size:15px;cursor:pointer}
 @media (prefers-color-scheme:dark){button{color:#1D0F29}}
 .done{margin-top:12px;padding:12px;border-radius:14px;background:var(--ok);color:var(--oko);font-weight:800;text-align:center}
+.live{padding:8px 0;border-bottom:1px solid var(--bd)}.live:last-child{border-bottom:0}.av.sm{width:34px;height:34px;font-size:14px}
+.nota{font-size:17px;font-weight:900;color:var(--tx);white-space:nowrap}.mini{height:6px;border-radius:99px;background:var(--alt);margin-top:5px;overflow:hidden}.mini div{height:100%;background:var(--star);border-radius:99px}
 .foot{margin-top:18px;text-align:center;font-size:12px;color:var(--su)}a{color:var(--p);font-weight:800}
 </style></head><body><div class="wrap">
 <div class="hero"><div class="ov">Avaliação da semana ${esc(state.periodo)}</div><h1>${esc(titulo)}</h1>
-<p>Oi, ${esc(nomeCurto(actor))}! Notas de 1 a 5, anônimas. ${state.phase === 'avaliacao' ? `Fecha ${esc(quandoBR(state.fechamento))} (ou antes, se todos avaliarem).` : ''} Tudo que você der aqui aparece no app na hora.</p>
+<p>Oi, ${esc(nomeCurto(actor))}! Notas de 1 a 5, anônimas. ${state.phase === 'avaliacao' ? `Fecha ${esc(quandoBR(state.fechamento))} (ou antes, se todos avaliarem).` : ''} Tudo que você der aqui aparece no app na hora — e as notas da galera aparecem aqui ao vivo.</p>
 <div class="bar"><div style="width:${prog.total ? Math.round((prog.feitas / prog.total) * 100) : 100}%"></div></div></div>
 ${msg ? `<div class="msg ok" role="status">${esc(msg)}</div>` : ''}${erro ? `<div class="msg err" role="alert">${esc(erro)}</div>` : ''}
+${aoVivo}
 ${cards || '<section class="card"><div class="muted">Ninguém para avaliar ainda.</div></section>'}
 ${faltaram.length ? `<section class="card"><div class="ov">Sem avaliação</div><div class="muted" style="margin-top:6px">${faltaram.map((r) => `${esc(nomeCurto(r.nome))} (${r.status === 'dispensado' ? 'dispensado' : 'não entregou'})`).join(', ')}</div></section>` : ''}
 <div class="foot">🐰 República Tocah do Coelho · <a href="https://guidelluca.github.io/tocah-do-coelho-app/">abrir o app</a><br>A página se atualiza sozinha se você avaliar pelo app.</div>
@@ -2035,8 +2045,8 @@ ${faltaram.length ? `<section class="card"><div class="ov">Sem avaliação</div>
 <script>
 (function(){var t=${JSON.stringify(token)},last=null;
 function tick(){if(document.activeElement&&/TEXTAREA|INPUT/.test(document.activeElement.tagName))return;
-fetch('/avaliar/estado?t='+encodeURIComponent(t)).then(function(r){return r.json()}).then(function(j){var k=j.phase+'|'+j.feitas+'|'+j.total;if(last&&k!==last)location.replace(location.pathname+'?t='+encodeURIComponent(t));last=k;}).catch(function(){});}
-tick();setInterval(tick,15000);
+fetch('/avaliar/estado?t='+encodeURIComponent(t)).then(function(r){return r.json()}).then(function(j){var k=j.phase+'|'+j.feitas+'|'+j.total+'|'+j.geral;if(last&&k!==last)location.replace(location.pathname+'?t='+encodeURIComponent(t));last=k;}).catch(function(){});}
+tick();setInterval(tick,10000);
 var a=document.querySelector('.card.destaque');if(a)a.scrollIntoView({block:'center'});})();
 </script></body></html>`;
 }
@@ -2096,7 +2106,7 @@ app.get('/avaliar/estado', async (req, res) => {
   try {
     const d = await carregarParaPagina(String(req.query.t || ''));
     const prog = d.state.avaliacoes.porAvaliador[d.actor] || { total: 0, feitas: 0 };
-    res.set('Cache-Control', 'no-store').json({ ok: true, phase: d.state.phase, ...prog, casa: d.state.avaliacoes });
+    res.set('Cache-Control', 'no-store').json({ ok: true, phase: d.state.phase, ...prog, geral: d.state.avaliacoes.feitas });
   } catch (error) {
     sendError(res, error);
   }

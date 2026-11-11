@@ -286,7 +286,40 @@ function buildCycleState({ key, now = Date.now(), escala = [], checks = {}, rati
     residents,
     avaliacoes: { esperadas: expected.length, feitas: done.length, porAvaliador },
     _rows: rows,
+    _expected: expected,
   };
+}
+
+/** Notas parciais de cada um (anônimas), para acompanhar a avaliação ao vivo. */
+function notasAoVivo(state) {
+  const esperadasPor = {};
+  const rows = state._rows || [];
+  state.residents.forEach((r) => {
+    esperadasPor[r.nome] = { casa: 0, banheirao: 0 };
+  });
+  // quantas notas cada um deve receber
+  const exp = state._expected || [];
+  exp.forEach((x) => {
+    if (esperadasPor[x.target]) esperadasPor[x.target][x.categoria] += 1;
+  });
+  return state.residents.map((r) => {
+    const mine = rows.filter((x) => norm(x[2]) === norm(r.nome));
+    const casa = mine.filter((x) => (String(x[7] || 'casa').trim().toLowerCase() || 'casa') === 'casa').map((x) => Number(x[3])).filter(Number.isFinite);
+    const ban = mine.filter((x) => String(x[7] || '').trim().toLowerCase() === 'banheirao').map((x) => Number(x[3])).filter(Number.isFinite);
+    const media = (l) => (l.length ? Math.round((l.reduce((a, b) => a + b, 0) / l.length) * 100) / 100 : null);
+    const dist = [1, 2, 3, 4, 5].map((n) => casa.filter((v) => v === n).length);
+    return {
+      nome: r.nome,
+      status: r.status,
+      media: media(casa),
+      notas: casa.length,
+      esperadas: esperadasPor[r.nome]?.casa || 0,
+      mediaBanheirao: r.banheirao ? media(ban) : null,
+      notasBanheirao: r.banheirao ? ban.length : 0,
+      esperadasBanheirao: r.banheirao ? esperadasPor[r.nome]?.banheirao || 0 : 0,
+      distribuicao: dist,
+    };
+  });
 }
 
 /** O que já avaliei: { TARGET: { casa: true, banheirao: true } } */
@@ -490,6 +523,7 @@ module.exports = {
   isLavanderia,
   hasBanheirao,
   buildCycleState,
+  notasAoVivo,
   ratedMap,
   cycleResults,
   resultToRow,

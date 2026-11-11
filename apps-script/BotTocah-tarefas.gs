@@ -1611,13 +1611,12 @@ function htmlLembreteAvaliacao_(destNome, faltam, aviso) {
 
 function htmlAvaliacaoEncerrada_(aviso, linkPasta) {
   var p = aviso.payload;
-  var lista = p.resultados.slice().sort(function (a, b) { return (b.media === null ? -1 : b.media) - (a.media === null ? -1 : a.media); });
+  var lista = p.resultados.slice();
   var ff = htmlEmailFontStack();
   var fmt = function (v) { return v === null || v === undefined ? '—' : Number(v).toFixed(1).replace('.', ','); };
   var linhas = lista.map(function (r, i) {
     var sub = r.entregou ? (r.atrasoDias ? 'Entregou com ' + r.atrasoDias + (r.atrasoDias > 1 ? ' dias' : ' dia') + ' de atraso' : 'Entregou no prazo') : 'Não entregou';
     return '<tr>' +
-      '<td width="30" style="width:30px;padding:10px 0;border-bottom:1px solid ' + TOCAH_COR.border + ';font-family:' + ff + ';font-size:15px;font-weight:900;color:' + TOCAH_COR.primary + ';">' + (i === 0 && r.media !== null ? '🏆' : (i + 1) + 'º') + '</td>' +
       '<td width="52" style="width:52px;padding:10px 0;border-bottom:1px solid ' + TOCAH_COR.border + ';">' + htmlEmailAvatar_(r.nome, 38) + '</td>' +
       '<td style="padding:10px 0;border-bottom:1px solid ' + TOCAH_COR.border + ';font-family:' + ff + ';">' +
       '<div style="font-size:15px;font-weight:900;color:' + TOCAH_COR.text + ';">' + nomeCurto_(r.nome) + '</div>' +

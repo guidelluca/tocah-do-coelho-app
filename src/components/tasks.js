@@ -401,10 +401,11 @@ export function AvaliarTab({ data }) {
         <AppText variant="title" color="onPrimarySoft">{prog.feitas >= prog.total ? 'Você avaliou todo mundo 🎉' : `Faltam ${prog.total - prog.feitas} de ${prog.total} notas`}</AppText>
         <ProgressBar value={prog.total ? prog.feitas / prog.total : 1} style={{ marginVertical: spacing.sm }} />
         <AppText variant="caption" color="onPrimarySoft">
-          Fecha {prazoCurto(ciclo.fechamento)} (ou antes, se todos avaliarem). Notas anônimas — o resultado só aparece quando fechar.
+          Fecha {prazoCurto(ciclo.fechamento)} (ou antes, se todos avaliarem). Notas anônimas; a média de cada um aparece ao vivo logo abaixo.
         </AppText>
         {me && me.status !== 'entregue' && <AppText variant="captionStrong" color="onPrimarySoft" style={{ marginTop: spacing.xs }}>Você não entregou nessa semana, mas ainda pode avaliar.</AppText>}
       </Card>
+      <NotasAoVivoCard ciclo={ciclo} />
       {ordenados.map((alvo) => (
         <AvaliarItem key={alvo.nome} ciclo={ciclo.key} alvo={alvo} rated={ciclo.ratedByMe?.[alvo.nome]} grupoBanheirao={data?.regras?.banheiraoGrupo || GRUPO_BANHEIRAO} />
       ))}
@@ -424,6 +425,63 @@ export function AvaliarTab({ data }) {
   );
 }
 
+/* ---------------- Notas ao vivo ---------------- */
+
+export function NotasAoVivoCard({ ciclo, style }) {
+  const { resident } = useResident();
+  const { spacing, radius, colors } = useTheme();
+  const notas = ciclo?.notasAoVivo;
+  if (!notas?.length) return null;
+  const fmt = (v) => (v === null || v === undefined ? '—' : Number(v).toFixed(1).replace('.', ','));
+  const encerrada = ciclo.phase === 'encerrada';
+  return (
+    <Card style={[{ marginBottom: spacing.md }, style]}>
+      <View style={styles.rowBetween}>
+        <View style={{ flex: 1 }}>
+          <AppText variant="overline" color="primary">{encerrada ? 'Notas finais' : 'Notas ao vivo'} · semana {ciclo.periodo}</AppText>
+          <AppText variant="heading">Como está cada um</AppText>
+        </View>
+        {!encerrada && <StatusPill label="Ao vivo" tone="danger" icon="circle" />}
+      </View>
+      <AppText variant="caption" color="textMuted" style={{ marginTop: 2, marginBottom: spacing.sm }}>
+        Média das notas recebidas até agora. Anônimas — muda na hora a cada nota (app ou e-mail).
+      </AppText>
+      {notas.map((n, i) => {
+        const entregou = n.status === 'entregue';
+        return (
+          <View key={n.nome}>
+            <View style={[styles.row, { gap: spacing.md, paddingVertical: spacing.sm }]}>
+              <Avatar name={n.nome} size={40} />
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <AppText variant="bodyStrong" numberOfLines={1}>{displayName(n.nome)}{sameName(n.nome, resident) ? ' (você)' : ''}</AppText>
+                {entregou ? (
+                  <>
+                    <View style={{ height: 6, borderRadius: radius.pill, backgroundColor: colors.surfaceSunken, overflow: 'hidden', marginTop: 4 }}>
+                      <View style={{ width: `${n.media ? (n.media / 5) * 100 : 0}%`, height: '100%', backgroundColor: colors.star, borderRadius: radius.pill }} />
+                    </View>
+                    <AppText variant="caption" color="textMuted" style={{ marginTop: 3 }}>
+                      {n.notas} de {n.esperadas} notas{n.esperadasBanheirao ? ` · banheirão ${fmt(n.mediaBanheirao)} (${n.notasBanheirao}/${n.esperadasBanheirao})` : ''}
+                    </AppText>
+                  </>
+                ) : (
+                  <AppText variant="caption" color="textMuted">{n.status === 'dispensado' ? 'Dispensado da semana' : 'Não entregou — sem nota'}</AppText>
+                )}
+              </View>
+              {entregou && (
+                <View style={[styles.row, { gap: 3 }]}>
+                  <Icon name="star" size={18} color="star" />
+                  <AppText variant="title" tabular>{fmt(n.media)}</AppText>
+                </View>
+              )}
+            </View>
+            {i < notas.length - 1 && <Divider />}
+          </View>
+        );
+      })}
+    </Card>
+  );
+}
+
 /* ---------------- Desempenho ---------------- */
 
 function fmtMedia(v) {
@@ -436,7 +494,7 @@ function pct(v) {
 export function ResultadoSemanaCard({ resultado, me }) {
   const { spacing, radius, colors } = useTheme();
   if (!resultado?.resultados?.length) return null;
-  const list = [...resultado.resultados].sort((a, b) => (b.media ?? -1) - (a.media ?? -1));
+  const list = resultado.resultados;
   const meu = list.find((r) => sameName(r.nome, me));
   return (
     <Card style={{ marginBottom: spacing.md }}>
@@ -445,7 +503,6 @@ export function ResultadoSemanaCard({ resultado, me }) {
       {list.map((r, i) => (
         <View key={r.nome}>
           <View style={[styles.row, { gap: spacing.md, paddingVertical: spacing.sm }]}>
-            <AppText variant="bodyStrong" color={i === 0 && r.media !== null ? 'primary' : 'textSubtle'} style={{ width: 22 }} tabular>{i === 0 && r.media !== null ? '🏆' : `${i + 1}º`}</AppText>
             <Avatar name={r.nome} size={36} />
             <View style={{ flex: 1, minWidth: 0 }}>
               <AppText variant="bodyStrong" numberOfLines={1}>{displayName(r.nome)}</AppText>
@@ -512,33 +569,7 @@ export function DesempenhoTab({ data, desempenho }) {
     <>
       <ResultadoSemanaCard resultado={data?.ultimoResultado} me={resident} />
 
-      <Card style={{ marginBottom: spacing.md }}>
-        <AppText variant="overline" color="primary">Ranking · últimas {Math.max(1, (d.ciclos || []).length)} semanas</AppText>
-        <AppText variant="heading" style={{ marginBottom: spacing.sm }}>Morador nota 10</AppText>
-        {!(d.ranking || []).length && <EmptyState icon="podium" title="Ainda sem histórico" message="O ranking aparece depois da primeira semana avaliada." compact />}
-        {(d.ranking || []).map((r, i) => {
-          const s = byName[r.nome] || {};
-          return (
-            <View key={r.nome}>
-              <View style={[styles.row, { gap: spacing.md, paddingVertical: spacing.sm }]}>
-                <AppText variant="heading" color={i < 3 ? 'primary' : 'textSubtle'} style={{ width: 28 }} tabular>{['🥇', '🥈', '🥉'][i] || `${i + 1}º`}</AppText>
-                <Avatar name={r.nome} size={40} />
-                <View style={{ flex: 1, minWidth: 0 }}>
-                  <AppText variant="bodyStrong" numberOfLines={1}>{displayName(r.nome)}{sameName(r.nome, resident) ? ' (você)' : ''}</AppText>
-                  <AppText variant="caption" color="textMuted" numberOfLines={1}>
-                    ⭐ {fmtMedia(s.media)} · no prazo {pct(s.pontualidade)}{s.sequenciaNoPrazo >= 2 ? ` · 🔥 ${s.sequenciaNoPrazo} seguidas` : ''}
-                  </AppText>
-                </View>
-                <View style={{ alignItems: 'flex-end' }}>
-                  <AppText variant="bodyStrong" color="primary" tabular>{String(r.pontos).replace('.', ',')}</AppText>
-                  <AppText variant="caption" color="textSubtle">pontos</AppText>
-                </View>
-              </View>
-              {i < d.ranking.length - 1 && <Divider />}
-            </View>
-          );
-        })}
-      </Card>
+      {[data?.anterior, data?.atual].filter((c) => c && c.phase === 'avaliacao').map((c) => <NotasAoVivoCard key={c.key} ciclo={c} />)}
 
       {meu && (
         <Card style={{ marginBottom: spacing.md }}>
@@ -572,7 +603,7 @@ export function DesempenhoTab({ data, desempenho }) {
           regras.multaAuto === false
             ? 'Multa automática desligada (aba Config).'
             : `Multa de R$ ${regras.multaValor ?? 60} na Caixinha: não entregou até quarta, ou média abaixo de ${String(regras.mediaMinima ?? 3).replace('.', ',')} (com ${regras.minAvaliacoes ?? 2}+ notas).`,
-          'Ranking: 60% nota média, 25% pontualidade e 15% entregas.',
+          'As notas de cada um aparecem ao vivo durante a avaliação (sem mostrar quem deu).',
         ].map((t) => (
           <View key={t} style={[styles.row, { gap: spacing.sm, alignItems: 'flex-start', marginTop: spacing.sm }]}>
             <Icon name="circle-small" color="primary" />
@@ -581,34 +612,6 @@ export function DesempenhoTab({ data, desempenho }) {
         ))}
       </Card>
     </>
-  );
-}
-
-/* ---------------- Destaque da semana (Início) ---------------- */
-
-export function DestaqueSemanaCard({ onPress, style }) {
-  const { resident } = useResident();
-  const { spacing } = useTheme();
-  const av = useAvaliacao(resident);
-  const r = av.data?.ultimoResultado;
-  if (!r?.resultados?.length) return null;
-  const fechou = Date.parse(r.fechamento);
-  if (Number.isFinite(fechou) && Date.now() - fechou > 8 * DAY) return null;
-  const top = [...r.resultados].filter((x) => x.media !== null && x.media !== undefined).sort((a, b) => b.media - a.media)[0];
-  if (!top) return null;
-  const meu = r.resultados.find((x) => sameName(x.nome, resident));
-  return (
-    <Card onPress={onPress} style={[{ marginBottom: spacing.md }, style]} accessibilityLabel="Ver resultado da semana">
-      <View style={[styles.row, { gap: spacing.md }]}>
-        <Avatar name={top.nome} size={44} ring="star" />
-        <View style={{ flex: 1, minWidth: 0 }}>
-          <AppText variant="overline" color="primary">🏆 Destaque da semana {r.periodo}</AppText>
-          <AppText variant="bodyStrong" numberOfLines={1}>{displayName(top.nome)} · ⭐ {Number(top.media).toFixed(1).replace('.', ',')}</AppText>
-          {meu && <AppText variant="caption" color="textMuted" numberOfLines={1}>Sua nota: {meu.media === null || meu.media === undefined ? '—' : Number(meu.media).toFixed(1).replace('.', ',')}{meu.multa ? ` · multa R$ ${meu.multa}` : ''}</AppText>}
-        </View>
-        <Icon name="chevron-right" color="textSubtle" />
-      </View>
-    </Card>
   );
 }
 
