@@ -52,10 +52,10 @@ export function useEntregarTarefa(resident) {
       return '';
     }
   }, [toast, toastError]);
-  const enviar = useCallback(async ({ ciclo, photoDataUrl }) => {
+  const enviar = useCallback(async ({ ciclo, photos }) => {
     setBusy(true);
     try {
-      const res = await entregarTarefa({ usuario: resident, ciclo, photoDataUrl });
+      const res = await entregarTarefa({ usuario: resident, ciclo, photos });
       toast(res?.atrasoDias ? `Tarefa entregue com ${res.atrasoDias} dia${res.atrasoDias > 1 ? 's' : ''} de atraso.` : 'Tarefa entregue no prazo! Mandou bem. 🐰', 'success');
       return true;
     } catch (e) {

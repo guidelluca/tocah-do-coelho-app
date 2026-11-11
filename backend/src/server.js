@@ -589,7 +589,14 @@ async function cycleState(ctx, key, now = Date.now()) {
   const escala = await escalaDoCiclo(ctx, key, isCurrent);
   const checks = ciclo.checksByCycle(ctx.feed, key, feedItemCycle);
   const closedRecord = ctx.desempenho.some((r) => r.ciclo === key);
-  return ciclo.buildCycleState({ key, now, escala, checks, ratingRows: ctx.ratingRows, rules: ctx.rules, closedRecord });
+  const state = ciclo.buildCycleState({ key, now, escala, checks, ratingRows: ctx.ratingRows, rules: ctx.rules, closedRecord });
+  // Fotos extras da entrega (linhas "check_photo" apontando para o check principal).
+  state.residents.forEach((r) => {
+    if (!r.checkTs) return;
+    const extras = ctx.feed.filter((x) => x.type === 'check_photo' && x.target === r.checkTs && x.photoDataUrl).map((x) => x.ts);
+    r.fotos = [...(r.hasPhoto ? [r.checkTs] : []), ...extras];
+  });
+  return state;
 }
 
 function publicCycle(state, { usuario = '', revelarNotas = false, results = null } = {}) {
@@ -849,7 +856,7 @@ const getActions = {
     else if (strict === '1') effectiveWeek = wk;
     else effectiveWeek = items.some((r) => r.week === wk) ? wk : weeks[0] || wk;
     let feed = items
-      .filter((x) => feedLib.itemWeek(x) === effectiveWeek && x.type !== 'deleted')
+      .filter((x) => feedLib.itemWeek(x) === effectiveWeek && x.type !== 'deleted' && x.type !== 'check_photo')
       .sort((a, b) => String(b.ts).localeCompare(String(a.ts)))
       .map(feedLib.anonymizeRating);
     if (photos === '0') {
@@ -987,9 +994,14 @@ const postActions = {
   /** Entrega da tarefa da semana: foto obrigatória, uma vez por ciclo (vale a semana passada até quarta). */
   async entregarTarefa(body) {
     const usuario = feedLib.canonicalResident(body.usuario);
-    const photoDataUrl = String(body.photoDataUrl || '').trim();
+    const fotos = (Array.isArray(body.photos) ? body.photos : [body.photoDataUrl])
+      .map((x) => String(x || '').trim())
+      .filter(Boolean)
+      .slice(0, 6);
+    const photoDataUrl = fotos[0] || '';
     if (!usuario) throw httpError(400, 'Morador inválido.');
     if (!photoDataUrl) throw httpError(400, 'A foto da tarefa é obrigatória.');
+    if (fotos.some((f) => !/^data:image\//i.test(f))) throw httpError(400, 'Formato de foto inválido.');
     const ctx = await avaliacaoContext({ fresh: true });
     const now = Date.now();
     const atualKey = ciclo.currentCycleKey(new Date(now));
@@ -1007,10 +1019,16 @@ const postActions = {
     const savedPhoto = await storePhotoDataUrl(photoDataUrl);
     const texto = atraso ? `entregou a tarefa com ${atraso} dia${atraso > 1 ? 's' : ''} de atraso` : 'entregou a tarefa no prazo';
     await appendRow(`${TASK_FEED_SHEET}!A:H`, [key, ts, 'check', usuario, usuario, tarefa, texto, savedPhoto]);
+    const extras = [];
+    for (let i = 1; i < fotos.length; i += 1) {
+      const saved = await storePhotoDataUrl(fotos[i]);
+      extras.push([key, new Date(Date.parse(ts) + i).toISOString(), 'check_photo', usuario, ts, tarefa, `foto ${i + 1} da entrega`, saved]);
+    }
+    if (extras.length) await appendRows(`${TASK_FEED_SHEET}!A:H`, extras);
     bump('feed', 'avaliacao');
     lastProcessAt = 0;
     setTimeout(() => processarCiclos().catch(() => {}), 50);
-    return { ok: true, message: 'Tarefa entregue.', ts, ciclo: key, atrasoDias: atraso };
+    return { ok: true, message: 'Tarefa entregue.', ts, ciclo: key, atrasoDias: atraso, fotos: fotos.length };
   },
 
   /** Avaliação anônima (1 a 5 + comentário) da entrega de outro morador. */

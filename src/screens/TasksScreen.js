@@ -2,8 +2,7 @@ import { useEffect, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { Screen } from '../components/Screen';
-import { FeedPhoto } from '../components/FeedPhoto';
-import { AvaliarTab, DeliveryCard, DesempenhoTab, EntregasCard } from '../components/tasks';
+import { AvaliarTab, DeliveryCard, DesempenhoTab, EntregasCard, GaleriaEntrega } from '../components/tasks';
 import { AppText, BottomSheet, Card, Chip, Icon, SkeletonCard } from '../components/ui';
 import { useResident } from '../context/ResidentContext';
 import { useTheme } from '../theme/ThemeContext';
@@ -19,7 +18,7 @@ export function TasksScreen() {
   const desempenho = useDesempenho();
   const nilde = useNilde();
   const [tab, setTab] = useState('semana');
-  const [photoTs, setPhotoTs] = useState('');
+  const [photoList, setPhotoList] = useState([]);
 
   useEffect(() => {
     if (route.params?.tab) setTab(route.params.tab);
@@ -63,8 +62,8 @@ export function TasksScreen() {
               </View>
             </Card>
           )}
-          {anteriorPendente && <EntregasCard ciclo={anteriorPendente} titulo={`Semana passada · ${anteriorPendente.periodo}`} me={resident} onPhoto={setPhotoTs} />}
-          {data?.atual && <EntregasCard ciclo={data.atual} titulo="Entregas desta semana" me={resident} onPhoto={setPhotoTs} />}
+          {anteriorPendente && <EntregasCard ciclo={anteriorPendente} titulo={`Semana passada · ${anteriorPendente.periodo}`} me={resident} onPhoto={setPhotoList} />}
+          {data?.atual && <EntregasCard ciclo={data.atual} titulo="Entregas desta semana" me={resident} onPhoto={setPhotoList} />}
           <Card onPress={() => navigation.navigate('Nilde')} variant="primary" accessibilityLabel="Abrir Nilde">
             <View style={[styles.row, { gap: spacing.md }]}>
               <Icon name="rabbit" size={28} color="onPrimarySoft" />
@@ -81,8 +80,8 @@ export function TasksScreen() {
       {tab === 'avaliar' && data && <AvaliarTab data={data} />}
       {tab === 'desempenho' && (desempenho.loading && !desempenho.data ? <SkeletonCard lines={5} /> : <DesempenhoTab data={data} desempenho={desempenho.data} />)}
 
-      <BottomSheet visible={!!photoTs} onClose={() => setPhotoTs('')} title="Foto da tarefa">
-        {!!photoTs && <FeedPhoto ts={photoTs} />}
+      <BottomSheet visible={photoList.length > 0} onClose={() => setPhotoList([])} title={photoList.length > 1 ? `Fotos da tarefa (${photoList.length})` : 'Foto da tarefa'}>
+        {photoList.length > 0 && <GaleriaEntrega fotos={photoList} />}
       </BottomSheet>
     </Screen>
   );

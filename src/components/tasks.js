@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Image, Platform, StyleSheet, View } from 'react-native';
+import { Image, Platform, ScrollView, StyleSheet, View } from 'react-native';
 import { useTheme } from '../theme/ThemeContext';
 import { useResident } from '../context/ResidentContext';
 import { useAvaliacao, useMyTask } from '../data/hooks';
@@ -48,6 +48,39 @@ export function statusInfo(r) {
   return { label: 'No prazo', tone: 'neutral', icon: 'clock-outline' };
 }
 
+const MAX_FOTOS = 6;
+
+/** Fotos de uma entrega: a principal + extras. */
+const fotosDe = (r) => (r?.fotos?.length ? r.fotos : r?.hasPhoto && r?.checkTs ? [r.checkTs] : []);
+
+/** Galeria das fotos da entrega: foto grande + miniaturas para trocar. */
+export function GaleriaEntrega({ fotos = [], style }) {
+  const { spacing, radius, colors } = useTheme();
+  const [idx, setIdx] = useState(0);
+  if (!fotos.length) {
+    return (
+      <View style={[styles.noPhoto, { borderRadius: radius.md, backgroundColor: colors.surfaceAlt }, style]}>
+        <AppText variant="caption" color="textMuted">Sem foto</AppText>
+      </View>
+    );
+  }
+  const atual = fotos[Math.min(idx, fotos.length - 1)];
+  return (
+    <View style={style}>
+      <FeedPhoto key={atual} ts={atual} aspectRatio={4 / 3} />
+      {fotos.length > 1 && (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm, paddingTop: spacing.sm }}>
+          {fotos.map((ts, i) => (
+            <PressableScale key={ts} onPress={() => setIdx(i)} accessibilityLabel={`Foto ${i + 1} de ${fotos.length}`} style={[styles.thumb, { borderWidth: 2, borderColor: i === idx ? colors.primary : 'transparent' }]}>
+              <FeedPhoto ts={ts} aspectRatio={1} style={{ width: 44, height: 44 }} rounded={false} />
+            </PressableScale>
+          ))}
+        </ScrollView>
+      )}
+    </View>
+  );
+}
+
 const tarefaDe = (r) => (r ? `${r.tarefa}${r.extra ? ` + ${niceExtra(r.extra)}` : ''}` : '');
 function niceExtra(extra) {
   const s = String(extra || '');
@@ -62,7 +95,7 @@ export function DeliveryCard({ style, compact }) {
   const av = useAvaliacao(resident);
   const task = useMyTask(resident);
   const { escolherFoto, enviar, busy } = useEntregarTarefa(resident);
-  const [preview, setPreview] = useState('');
+  const [fotos, setFotos] = useState([]);
   const [open, setOpen] = useState(false);
 
   if (av.loading && !av.data) return <SkeletonCard lines={3} />;
@@ -84,11 +117,11 @@ export function DeliveryCard({ style, compact }) {
   const isLav = /LAVANDERIA/i.test(norm(e.tarefa));
   const pick = async (source) => {
     const photo = await escolherFoto(source);
-    if (photo) setPreview(photo);
+    if (photo) setFotos((prev) => [...prev, photo].slice(0, MAX_FOTOS));
   };
   const confirmar = async () => {
-    const ok = await enviar({ ciclo: e.ciclo, photoDataUrl: preview });
-    if (ok) setPreview('');
+    const ok = await enviar({ ciclo: e.ciclo, photos: fotos });
+    if (ok) setFotos([]);
   };
   const descricao = !atrasadaAnterior ? t.descricao : '';
 
@@ -131,40 +164,57 @@ export function DeliveryCard({ style, compact }) {
       )}
 
       {entregue ? (
-        <View style={[styles.row, { marginTop: spacing.md, gap: spacing.md }]}>
-          {!!e.checkTs && e.hasPhoto && (
-            <View style={{ width: 64, height: 64, borderRadius: radius.md, overflow: 'hidden' }}>
-              <FeedPhoto ts={e.checkTs} aspectRatio={1} style={{ width: 64, height: 64 }} />
-            </View>
-          )}
-          <View style={{ flex: 1 }}>
-            <AppText variant="bodyStrong" color={e.atrasoDias ? 'warning' : 'success'}>Entregue {formatWeekdayTime(e.entregueEm)}</AppText>
+        <View style={{ marginTop: spacing.md, gap: spacing.sm }}>
+          <View>
+            <AppText variant="bodyStrong" color={e.atrasoDias ? 'warning' : 'success'}>
+              Entregue {formatWeekdayTime(e.entregueEm)}{fotosDe(e).length > 1 ? ` · ${fotosDe(e).length} fotos` : ''}
+            </AppText>
             <AppText variant="caption" color="textMuted">A avaliação abre quando os 5 entregarem (ou quarta 23h59).</AppText>
           </View>
+          {fotosDe(e).length > 0 && (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm }}>
+              {fotosDe(e).map((ts) => (
+                <View key={ts} style={{ width: 64, height: 64, borderRadius: radius.md, overflow: 'hidden' }}>
+                  <FeedPhoto ts={ts} aspectRatio={1} style={{ width: 64, height: 64 }} />
+                </View>
+              ))}
+            </ScrollView>
+          )}
         </View>
       ) : (
         <View style={[styles.row, { marginTop: spacing.md, gap: spacing.sm }]}>
-          <Button label="Enviar foto da tarefa" icon="camera" onPress={() => pick('camera')} loading={busy} style={{ flex: 1 }} />
-          {Platform.OS === 'web' && <IconButton icon="image-outline" variant="primary" onPress={() => pick('library')} disabled={busy} accessibilityLabel="Escolher foto da galeria" size={48} />}
+          <Button label="Tirar foto da tarefa" icon="camera" onPress={() => pick('camera')} loading={busy} style={{ flex: 1 }} />
+          <IconButton icon="image-outline" variant="primary" onPress={() => pick('library')} disabled={busy} accessibilityLabel="Escolher foto da galeria" size={48} />
         </View>
       )}
 
       <BottomSheet
-        visible={!!preview}
-        onClose={() => !busy && setPreview('')}
-        title="Conferir e enviar"
-        footer={
-          <View style={[styles.row, { gap: spacing.sm, flex: 1 }]}>
-            <Button label="Trocar foto" variant="secondary" icon="camera-retake-outline" onPress={() => pick(Platform.OS === 'web' ? 'library' : 'camera')} disabled={busy} style={{ flex: 1 }} />
-            <Button label="Enviar" icon="send" onPress={confirmar} loading={busy} style={{ flex: 1 }} />
-          </View>
-        }
+        visible={fotos.length > 0}
+        onClose={() => !busy && setFotos([])}
+        title={`Conferir e enviar · ${fotos.length} foto${fotos.length > 1 ? 's' : ''}`}
+        footer={<Button label={`Enviar ${fotos.length > 1 ? `${fotos.length} fotos` : 'foto'}`} icon="send" onPress={confirmar} loading={busy} style={{ flex: 1 }} />}
       >
-        {!!preview && <Image source={{ uri: preview }} style={{ width: '100%', aspectRatio: 4 / 3, borderRadius: radius.md, backgroundColor: colors.surfaceSunken }} resizeMode="cover" />}
+        <View style={styles.grid}>
+          {fotos.map((uri, i) => (
+            <View key={i} style={[styles.gridItem, { borderRadius: radius.md, backgroundColor: colors.surfaceSunken }]}>
+              <Image source={{ uri }} style={StyleSheet.absoluteFill} resizeMode="cover" accessibilityLabel={`Foto ${i + 1}`} />
+              <IconButton icon="close" variant="primary" size={32} iconSize={18} onPress={() => setFotos((prev) => prev.filter((_, k) => k !== i))} disabled={busy} accessibilityLabel={`Remover foto ${i + 1}`} style={styles.removeBtn} />
+            </View>
+          ))}
+          {fotos.length < MAX_FOTOS && (
+            <PressableScale onPress={() => pick('camera')} disabled={busy} accessibilityLabel="Tirar mais uma foto" style={[styles.gridItem, styles.addTile, { borderRadius: radius.md, borderColor: colors.borderStrong }]}>
+              <Icon name="camera-plus-outline" size={28} color="primary" />
+              <AppText variant="captionStrong" color="primary">Mais uma</AppText>
+            </PressableScale>
+          )}
+        </View>
+        {fotos.length < MAX_FOTOS && (
+          <Button label="Adicionar da galeria" variant="ghost" icon="image-plus" onPress={() => pick('library')} disabled={busy} style={{ marginTop: spacing.sm }} />
+        )}
         <View style={[styles.row, { gap: spacing.sm, marginTop: spacing.md, padding: spacing.md, borderRadius: radius.md, backgroundColor: colors.primarySoft }]}>
           <Icon name="information-outline" color="onPrimarySoft" />
           <AppText variant="caption" color="onPrimarySoft" style={{ flex: 1 }}>
-            Só dá pra enviar uma vez por semana. A foto vai para a avaliação da galera.
+            Mande quantas fotos quiser (até {MAX_FOTOS}) — antes e depois ajuda na avaliação. Só dá pra enviar uma vez por semana.
             {e.status === 'atrasada' ? ` Vai contar ${plural(e.atrasoDias || 1, 'dia', 'dias')} de atraso.` : ''}
           </AppText>
         </View>
@@ -176,7 +226,7 @@ export function DeliveryCard({ style, compact }) {
 /* ---------------- Entregas da semana ---------------- */
 
 export function EntregasCard({ ciclo, titulo, me, onPhoto, style }) {
-  const { spacing } = useTheme();
+  const { spacing, colors } = useTheme();
   if (!ciclo) return null;
   const total = ciclo.residents.length || 5;
   return (
@@ -207,9 +257,14 @@ export function EntregasCard({ ciclo, titulo, me, onPhoto, style }) {
                 <AppText variant="caption" color="textMuted" numberOfLines={1}>{tarefaDe(r)}</AppText>
                 <StatusPill label={info.label} tone={info.tone} icon={info.icon} style={{ alignSelf: 'flex-start', marginTop: 2 }} />
               </View>
-              {r.status === 'entregue' && r.hasPhoto && !!r.checkTs && (
-                <PressableScale onPress={() => onPhoto?.(r.checkTs)} accessibilityLabel={`Ver foto da tarefa de ${displayName(r.nome)}`} style={styles.thumb}>
-                  <FeedPhoto ts={r.checkTs} aspectRatio={1} style={{ width: 48, height: 48 }} />
+              {r.status === 'entregue' && fotosDe(r).length > 0 && (
+                <PressableScale onPress={() => onPhoto?.(fotosDe(r))} accessibilityLabel={`Ver ${fotosDe(r).length > 1 ? `${fotosDe(r).length} fotos` : 'foto'} da tarefa de ${displayName(r.nome)}`} style={styles.thumb}>
+                  <FeedPhoto ts={fotosDe(r)[0]} aspectRatio={1} style={{ width: 48, height: 48 }} />
+                  {fotosDe(r).length > 1 && (
+                    <View style={[styles.countBadge, { backgroundColor: colors.imageScrim }]}>
+                      <AppText variant="captionStrong" color="onImage">+{fotosDe(r).length - 1}</AppText>
+                    </View>
+                  )}
                 </PressableScale>
               )}
             </View>
@@ -267,14 +322,10 @@ function AvaliarItem({ ciclo, alvo, rated, onDone }) {
         </View>
         <StatusPill {...statusInfo(alvo)} />
       </View>
-      {alvo.hasPhoto && !!alvo.checkTs ? (
-        <FeedPhoto ts={alvo.checkTs} aspectRatio={4 / 3} />
-      ) : (
-        <View style={[styles.noPhoto, { borderRadius: radius.md, backgroundColor: colors.surfaceAlt }]}>
-          <AppText variant="caption" color="textMuted">Sem foto</AppText>
-        </View>
-      )}
-      <AppText variant="caption" color="textSubtle" style={{ marginTop: spacing.xs }}>Entregue {formatWeekdayTime(alvo.entregueEm)}</AppText>
+      <GaleriaEntrega fotos={fotosDe(alvo)} />
+      <AppText variant="caption" color="textSubtle" style={{ marginTop: spacing.xs }}>
+        Entregue {formatWeekdayTime(alvo.entregueEm)}{fotosDe(alvo).length > 1 ? ` · ${fotosDe(alvo).length} fotos` : ''}
+      </AppText>
 
       {feito ? (
         <View style={[styles.row, { gap: spacing.sm, marginTop: spacing.md }]}>
@@ -557,4 +608,9 @@ const styles = StyleSheet.create({
   thumb: { width: 48, height: 48, borderRadius: 10, overflow: 'hidden' },
   noPhoto: { aspectRatio: 4 / 3, alignItems: 'center', justifyContent: 'center' },
   kpi: { flexBasis: '47%', flexGrow: 1, gap: 2 },
+  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  gridItem: { width: '31%', aspectRatio: 1, overflow: 'hidden' },
+  addTile: { alignItems: 'center', justifyContent: 'center', gap: 4, borderWidth: 2, borderStyle: 'dashed' },
+  removeBtn: { position: 'absolute', top: 4, right: 4 },
+  countBadge: { position: 'absolute', right: 0, bottom: 0, left: 0, top: 0, alignItems: 'center', justifyContent: 'center' },
 });
