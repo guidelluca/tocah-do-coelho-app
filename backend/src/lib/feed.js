@@ -162,7 +162,9 @@ function checksByResident(feedItems, wk) {
   const map = {};
   for (const item of feedItems) {
     if (item.type !== 'check') continue;
-    if (itemWeekBySp(item) !== wk) continue;
+    // A coluna A guarda a semana (ciclo) da entrega — entregas atrasadas contam na semana certa.
+    const itemWeek = /^\d{4}-W\d{2}$/.test(String(item.week || '').trim()) ? String(item.week).trim() : itemWeekBySp(item);
+    if (itemWeek !== wk) continue;
     const who = canonicalResident(item.actor);
     if (!who) continue;
     if (!map[who] || String(item.ts) > String(map[who].ts)) map[who] = item;

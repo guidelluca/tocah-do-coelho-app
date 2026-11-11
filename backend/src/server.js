@@ -8,6 +8,7 @@ const { getCell, norm, toNumberLike, normalizeMoney2, colLetter, brl } = require
 const { weekKey, spDateBr, spDateKey, spWeekDays, getSaoPauloYearMonth, tsToDate } = require('./lib/time');
 const fin = require('./lib/finance');
 const feedLib = require('./lib/feed');
+const ciclo = require('./lib/ciclo');
 
 dotenv.config();
 
@@ -39,6 +40,11 @@ const {
   SETTLED_SHEET = 'AcertosQuitados',
   /** Aba que o Apps Script de tarefas publica para o app (escala da semana atual). */
   ESCALA_APP_SHEET = 'EscalaApp',
+  /** Avaliação semanal das tarefas. */
+  CICLOS_ESCALA_SHEET = 'CiclosEscala',
+  DESEMPENHO_SHEET = 'Desempenho',
+  MULTAS_SHEET = 'MultasTarefas',
+  AVISOS_SHEET = 'AvisosEmail',
 } = process.env;
 
 const DEFAULT_FINANCE_MODE = 'AUTO';
@@ -53,6 +59,12 @@ const DEFAULT_CONFIG = [
   ['regrasDaCasa', 'Limpe o que usar, respeite os turnos e registre gastos no mesmo dia.'],
   ['descricaoTarefa', 'Varrer, tirar lixos e organizar.'],
   ['fraseHome', 'Gente, sabe aquele momento que você já gozou tudo que cê tinha pra gozar?'],
+  ['avaliacaoInicio', '2026-W46'],
+  ['avaliacaoToleranciaDias', '3'],
+  ['avaliacaoMultaAuto', 'sim'],
+  ['avaliacaoMultaValor', '60'],
+  ['avaliacaoMediaMinima', '3'],
+  ['avaliacaoMinAvaliacoes', '2'],
 ];
 
 /* ======================================================================
@@ -246,7 +258,7 @@ function withWriteLock(fn) {
 }
 
 /** Versões em memória por recurso: o app consulta isso (sem tocar no Sheets) para saber o que recarregar. */
-const versions = { finance: 1, caixinha: 1, feed: 1, ratings: 1, likes: 1, profiles: 1, config: 1 };
+const versions = { finance: 1, caixinha: 1, feed: 1, ratings: 1, likes: 1, profiles: 1, config: 1, avaliacao: 1 };
 function bump(...keys) {
   keys.forEach((k) => {
     versions[k] = (versions[k] || 0) + 1;
@@ -513,6 +525,221 @@ function statusFields(check) {
  * Ações GET
  * ==================================================================== */
 
+
+/* ======================================================================
+ * Avaliação semanal das tarefas (entrega com foto → avaliação → desempenho)
+ * ==================================================================== */
+
+const AVISOS_HEADER = ['id', 'tipo', 'ciclo', 'criadoEm', 'enviadoEm', 'payload'];
+const MULTAS_HEADER = ['ciclo', 'morador', 'valor', 'motivo', 'lancadoEm'];
+const CICLOS_ESCALA_HEADER = ['ciclo', 'morador', 'tarefa', 'extra', 'atualizadoEm'];
+
+function feedItemCycle(item) {
+  return ciclo.isCycleKey(item.week) ? item.week : feedLib.itemWeekBySp(item);
+}
+
+async function avaliacaoContext({ fresh = false } = {}) {
+  const config = await readConfig();
+  const rules = ciclo.rulesFromConfig(config);
+  const inicio = ciclo.isCycleKey(config.avaliacaoInicio) ? config.avaliacaoInicio : '2026-W46';
+  const titles = await getSpreadsheetTitles();
+  const read = async (sheet, range) => (titles.includes(sheet) ? readRangeOrEmpty(`${sheet}!${range}`, { fresh }) : []);
+  const [feed, ratingRows, ciclosRows, desempenhoRows, avisosRows] = await Promise.all([
+    readFeed({ fresh }),
+    read(RATINGS_SHEET, 'A:H'),
+    read(CICLOS_ESCALA_SHEET, 'A:E'),
+    read(DESEMPENHO_SHEET, 'A:L'),
+    read(AVISOS_SHEET, 'A:F'),
+  ]);
+  return {
+    config,
+    rules,
+    inicio,
+    feed,
+    ratingRows: ratingRows.slice(1),
+    ciclosEscala: ciclo.parseCiclosEscala(ciclosRows),
+    desempenho: ciclo.parseDesempenhoRows(desempenhoRows),
+    avisos: avisosRows.slice(1).map((r) => ({ id: getCell(r, 0), tipo: getCell(r, 1), ciclo: getCell(r, 2) })),
+  };
+}
+
+/** Escala do ciclo: aba CiclosEscala (Apps Script) → EscalaApp (semana atual) → nome da tarefa da própria entrega. */
+async function escalaDoCiclo(ctx, key, isCurrent) {
+  const fromSheet = ctx.ciclosEscala[key];
+  let base = [];
+  if (fromSheet && fromSheet.length) base = fromSheet;
+  else if (isCurrent) {
+    try {
+      const esc = await readEscala();
+      base = esc.list.map((x) => ({ nome: String(x.nome || '').toUpperCase(), tarefa: x.tarefaBase || x.tarefa || '', extra: x.extra || '' }));
+    } catch {
+      base = [];
+    }
+  }
+  const checks = ciclo.checksByCycle(ctx.feed, key, feedItemCycle);
+  return RESIDENTS.map((nome) => {
+    const found = base.find((x) => norm(x.nome) === norm(nome));
+    const check = checks[nome];
+    return { nome, tarefa: found?.tarefa || check?.tarefa || 'Tarefa da semana', extra: found?.extra || '' };
+  });
+}
+
+async function cycleState(ctx, key, now = Date.now()) {
+  const isCurrent = key === ciclo.currentCycleKey(new Date(now));
+  const escala = await escalaDoCiclo(ctx, key, isCurrent);
+  const checks = ciclo.checksByCycle(ctx.feed, key, feedItemCycle);
+  const closedRecord = ctx.desempenho.some((r) => r.ciclo === key);
+  return ciclo.buildCycleState({ key, now, escala, checks, ratingRows: ctx.ratingRows, rules: ctx.rules, closedRecord });
+}
+
+function publicCycle(state, { usuario = '', revelarNotas = false, results = null } = {}) {
+  if (!state) return null;
+  const me = norm(usuario);
+  const { _rows, ...rest } = state;
+  const out = { ...rest, residents: state.residents.map((r) => ({ ...r })) };
+  if (me) out.ratedByMe = ciclo.ratedMap(_rows, usuario);
+  if (revelarNotas && results) {
+    out.resultados = results.map((r) => ({ ...r, comentarios: norm(r.nome) === me ? r.comentarios : undefined }));
+  }
+  return out;
+}
+
+let lastProcessAt = 0;
+let processing = null;
+
+/** Abre/fecha avaliações, grava desempenho, lança multas e cria avisos de e-mail. Idempotente. */
+async function processarCiclos({ force = false } = {}) {
+  if (!force && Date.now() - lastProcessAt < 60000) return { skipped: true };
+  if (processing) return processing;
+  processing = withWriteLock(async () => {
+    lastProcessAt = Date.now();
+    const ctx = await avaliacaoContext({ fresh: true });
+    const now = Date.now();
+    const atual = ciclo.currentCycleKey(new Date(now));
+    const keys = [ciclo.shiftCycleKey(atual, -2), ciclo.shiftCycleKey(atual, -1), atual].filter((k) => k >= ctx.inicio);
+    const events = [];
+    const haveAviso = (tipo, key) => ctx.avisos.some((a) => a.tipo === tipo && a.ciclo === key);
+
+    // Guarda a escala da semana atual (histórico), caso o Apps Script ainda não tenha publicado.
+    if (!ctx.ciclosEscala[atual]) {
+      const esc = await escalaDoCiclo(ctx, atual, true);
+      if (esc.some((x) => x.tarefa && x.tarefa !== 'Tarefa da semana')) {
+        await ensureSheetExists(CICLOS_ESCALA_SHEET, CICLOS_ESCALA_HEADER);
+        await appendRows(`${CICLOS_ESCALA_SHEET}!A:E`, esc.map((x) => [atual, x.nome, x.tarefa, x.extra, new Date().toISOString()]));
+        ctx.ciclosEscala[atual] = esc;
+      }
+    }
+
+    for (const key of keys) {
+      const state = await cycleState(ctx, key, now);
+      if (state.phase === 'entregas') continue;
+      const entregas = state.residents.map((r) => ({ nome: r.nome, tarefa: r.tarefa, extra: r.extra, status: r.status, atrasoDias: r.atrasoDias, checkTs: r.checkTs || '' }));
+      if (!haveAviso('avaliacao_aberta', key) && state.residents.some((r) => r.status === 'entregue')) {
+        events.push({ tipo: 'avaliacao_aberta', ciclo: key, payload: { periodo: state.periodo, fechamento: state.fechamento, entregas } });
+      }
+      if (state.phase === 'avaliacao') {
+        const lembrarEm = Date.parse(state.fechamento) - 30 * 60 * 60 * 1000;
+        if (now >= lembrarEm && !haveAviso('lembrete_avaliacao', key)) {
+          const pendentes = Object.entries(state.avaliacoes.porAvaliador).filter(([, v]) => v.total > v.feitas).map(([nome, v]) => ({ nome, faltam: v.total - v.feitas }));
+          if (pendentes.length) events.push({ tipo: 'lembrete_avaliacao', ciclo: key, payload: { periodo: state.periodo, fechamento: state.fechamento, pendentes } });
+        }
+        continue;
+      }
+      // encerrada
+      if (ctx.desempenho.some((r) => r.ciclo === key)) continue;
+      const results = ciclo.cycleResults(state, ctx.rules);
+      const fechadoEm = new Date().toISOString();
+      await ensureSheetExists(DESEMPENHO_SHEET, ciclo.DESEMPENHO_HEADER);
+      await appendRows(`${DESEMPENHO_SHEET}!A:L`, results.map((r) => ciclo.resultToRow(r, fechadoEm)));
+      const multas = results.filter((r) => r.multa > 0);
+      if (multas.length) {
+        await ensureSheetExists(MULTAS_SHEET, MULTAS_HEADER);
+        await appendRows(`${MULTAS_SHEET}!A:E`, multas.map((r) => [key, r.nome, r.multa, r.motivo, fechadoEm]));
+        await appendRows('Caixinha!A:D', multas.map((r) => [spDateBr(), `Multa tarefa · ${r.nome} · semana ${state.periodo}`, r.multa, `automática • ${r.motivo}`]));
+        bump('caixinha');
+      }
+      await ensureSheetExists(TASK_FEED_SHEET);
+      await appendRow(`${TASK_FEED_SHEET}!A:H`, [key, fechadoEm, 'comment', 'TOCAH', '', '', `🏁 Avaliação da semana ${state.periodo} encerrada. Veja o resultado em Tarefas → Desempenho.`, '']);
+      ctx.desempenho.push(...results.map((r) => ({ ...r, fechadoEm })));
+      events.push({
+        tipo: 'avaliacao_encerrada',
+        ciclo: key,
+        payload: {
+          periodo: state.periodo,
+          resultados: results.map(({ comentarios, ...r }) => r),
+        },
+      });
+      bump('feed');
+    }
+
+    if (events.length) {
+      await ensureSheetExists(AVISOS_SHEET, AVISOS_HEADER);
+      const criadoEm = new Date().toISOString();
+      await appendRows(`${AVISOS_SHEET}!A:F`, events.map((e) => [`${e.tipo}:${e.ciclo}`, e.tipo, e.ciclo, criadoEm, '', JSON.stringify(e.payload)]));
+      ctx.avisos.push(...events.map((e) => ({ id: `${e.tipo}:${e.ciclo}`, tipo: e.tipo, ciclo: e.ciclo })));
+      bump('avaliacao');
+    }
+    return { ok: true, events: events.map((e) => `${e.tipo}:${e.ciclo}`) };
+  }).finally(() => {
+    processing = null;
+  });
+  return processing;
+}
+
+async function avaliacaoSnapshot(usuario = '') {
+  const ctx = await avaliacaoContext();
+  const now = Date.now();
+  const atualKey = ciclo.currentCycleKey(new Date(now));
+  const anteriorKey = ciclo.shiftCycleKey(atualKey, -1);
+  const atual = atualKey >= ctx.inicio ? await cycleState(ctx, atualKey, now) : null;
+  const anterior = anteriorKey >= ctx.inicio ? await cycleState(ctx, anteriorKey, now) : null;
+
+  // Ciclo que está em avaliação (ou o último encerrado, para mostrar o resultado).
+  const emAvaliacao = [anterior, atual].find((x) => x && x.phase === 'avaliacao') || null;
+  const ultimoFechadoKey = Array.from(new Set(ctx.desempenho.map((r) => r.ciclo))).sort().pop() || '';
+  let ultimoResultado = null;
+  if (ultimoFechadoKey) {
+    const st = await cycleState(ctx, ultimoFechadoKey, now);
+    ultimoResultado = publicCycle(st, { usuario, revelarNotas: true, results: ciclo.cycleResults(st, ctx.rules) });
+    // multas e médias oficiais = as gravadas no fechamento
+    const gravados = ctx.desempenho.filter((r) => r.ciclo === ultimoFechadoKey);
+    ultimoResultado.resultados = ultimoResultado.resultados.map((r) => {
+      const g = gravados.find((x) => x.nome === r.nome);
+      return g ? { ...r, entregou: g.entregou, atrasoDias: g.atrasoDias, entregueEm: g.entregueEm || r.entregueEm, media: g.media, mediaBanheirao: g.mediaBanheirao, multa: g.multa, motivo: g.motivo, nAvaliacoes: g.nAvaliacoes } : r;
+    });
+  }
+
+  // Qual ciclo a minha próxima entrega vai cobrir: a semana passada (se ainda dá) ou a atual.
+  let minhaEntrega = null;
+  if (usuario) {
+    const me = norm(usuario);
+    const pick = (st) => st && st.residents.find((r) => norm(r.nome) === me);
+    const prev = pick(anterior);
+    const cur = pick(atual);
+    if (prev && prev.status === 'atrasada') minhaEntrega = { ciclo: anterior.key, periodo: anterior.periodo, tolerancia: anterior.tolerancia, ...prev };
+    else if (cur) minhaEntrega = { ciclo: atual.key, periodo: atual.periodo, tolerancia: atual.tolerancia, ...cur };
+    if (minhaEntrega && prev && prev.status === 'atrasada' && cur) minhaEntrega.depois = { ciclo: atual.key, ...cur };
+  }
+
+  return {
+    ok: true,
+    agora: new Date(now).toISOString(),
+    inicio: ctx.inicio,
+    regras: {
+      multaAuto: ctx.rules.multaAuto,
+      multaValor: ctx.rules.multaValor,
+      mediaMinima: ctx.rules.mediaMinima,
+      minAvaliacoes: ctx.rules.minAvaliacoes,
+      toleranciaDias: ctx.rules.toleranciaDias - 6,
+    },
+    atual: publicCycle(atual, { usuario }),
+    anterior: publicCycle(anterior, { usuario }),
+    emAvaliacao: emAvaliacao ? emAvaliacao.key : '',
+    minhaEntrega,
+    ultimoResultado,
+  };
+}
+
 const getActions = {
   async getSyncState() {
     return { ok: true, versions, serverTime: new Date().toISOString(), startedAt: STARTED_AT, week: weekKey(), today: spDateKey() };
@@ -577,6 +804,23 @@ const getActions = {
     }
     // Continua sendo um array (compatível com o app antigo); campos novos são extras.
     return escala.list.map((item) => ({ ...item, fonte: escala.source, ...statusFields(checks[feedLib.canonicalResident(item.nome)]) }));
+  },
+
+  async getAvaliacaoSemana({ usuario = '' }) {
+    processarCiclos().catch((e) => console.warn('[avaliacao] processar falhou:', e?.message || e));
+    return avaliacaoSnapshot(usuario);
+  },
+
+  async getDesempenho() {
+    const ctx = await avaliacaoContext();
+    const d = ciclo.computeDesempenho(ctx.desempenho, RESIDENTS, 8);
+    return { ok: true, ...d, totalCiclos: new Set(ctx.desempenho.map((r) => r.ciclo)).size, regras: { multaValor: ctx.rules.multaValor, mediaMinima: ctx.rules.mediaMinima } };
+  },
+
+  /** Chamado pelo Apps Script de hora em hora (acorda o servidor e processa prazos). */
+  async tickAvaliacao() {
+    const res = await processarCiclos({ force: true });
+    return { ok: true, ...res };
   },
 
   async getTaskRatings({ strict, actor, history }) {
@@ -740,6 +984,75 @@ const getActions = {
  * ==================================================================== */
 
 const postActions = {
+  /** Entrega da tarefa da semana: foto obrigatória, uma vez por ciclo (vale a semana passada até quarta). */
+  async entregarTarefa(body) {
+    const usuario = feedLib.canonicalResident(body.usuario);
+    const photoDataUrl = String(body.photoDataUrl || '').trim();
+    if (!usuario) throw httpError(400, 'Morador inválido.');
+    if (!photoDataUrl) throw httpError(400, 'A foto da tarefa é obrigatória.');
+    const ctx = await avaliacaoContext({ fresh: true });
+    const now = Date.now();
+    const atualKey = ciclo.currentCycleKey(new Date(now));
+    const key = ciclo.isCycleKey(body.ciclo) ? body.ciclo : atualKey;
+    if (key > atualKey) throw httpError(400, 'Essa semana ainda não começou.');
+    if (key < ctx.inicio) throw httpError(400, 'A avaliação com foto começou depois dessa semana.');
+    const state = await cycleState(ctx, key, now);
+    const mine = state.residents.find((r) => r.nome === usuario);
+    if (!mine) throw httpError(400, 'Morador fora da escala.');
+    if (mine.status === 'entregue') throw httpError(409, 'Você já entregou a tarefa dessa semana.', { code: 'ALREADY_DONE', checkTs: mine.checkTs });
+    if (mine.status === 'nao_entregue' || state.phase === 'encerrada') throw httpError(400, 'O prazo de tolerância dessa semana já acabou.', { code: 'DEADLINE_PASSED' });
+    const ts = new Date().toISOString();
+    const atraso = ciclo.lateDays(Date.parse(ts), Date.parse(mine.prazo));
+    const tarefa = mine.tarefa + (mine.extra ? ` + ${mine.extra}` : '');
+    const savedPhoto = await storePhotoDataUrl(photoDataUrl);
+    const texto = atraso ? `entregou a tarefa com ${atraso} dia${atraso > 1 ? 's' : ''} de atraso` : 'entregou a tarefa no prazo';
+    await appendRow(`${TASK_FEED_SHEET}!A:H`, [key, ts, 'check', usuario, usuario, tarefa, texto, savedPhoto]);
+    bump('feed', 'avaliacao');
+    lastProcessAt = 0;
+    setTimeout(() => processarCiclos().catch(() => {}), 50);
+    return { ok: true, message: 'Tarefa entregue.', ts, ciclo: key, atrasoDias: atraso };
+  },
+
+  /** Avaliação anônima (1 a 5 + comentário) da entrega de outro morador. */
+  async avaliarEntrega(body) {
+    const actor = feedLib.canonicalResident(body.actor);
+    const target = feedLib.canonicalResident(body.target);
+    const score = Number(body.nota);
+    const categoria = String(body.categoria || 'casa').trim().toLowerCase() === 'banheirao' ? 'banheirao' : 'casa';
+    const comentario = String(body.comentario || '').trim().slice(0, 400);
+    if (!actor || !target || !Number.isInteger(score) || score < 1 || score > 5) throw httpError(400, 'Dados de avaliação inválidos.');
+    if (actor === target) throw httpError(400, 'Não dá para avaliar a própria tarefa.');
+    const ctx = await avaliacaoContext({ fresh: true });
+    const key = ciclo.isCycleKey(body.ciclo) ? body.ciclo : '';
+    if (!key) throw httpError(400, 'Semana inválida.');
+    const state = await cycleState(ctx, key);
+    if (state.phase !== 'avaliacao') throw httpError(400, state.phase === 'encerrada' ? 'A avaliação dessa semana já fechou.' : 'A avaliação ainda não abriu.', { code: 'NOT_OPEN' });
+    const alvo = state.residents.find((r) => r.nome === target);
+    if (!alvo || alvo.status !== 'entregue') throw httpError(400, 'Esse morador não entregou a tarefa.');
+    if (categoria === 'banheirao' && !alvo.banheirao) throw httpError(400, 'Esse morador não estava no banheirão.');
+    const already = ciclo.ratedMap(state._rows, actor)[target]?.[categoria];
+    if (already) throw httpError(409, 'Você já avaliou essa entrega.', { code: 'ALREADY_RATED' });
+    const ts = new Date().toISOString();
+    const tarefa = categoria === 'banheirao' ? 'Banheirão' : alvo.tarefa;
+    await ensureSheetExists(RATINGS_SHEET, ['week', 'actor', 'target', 'nota', 'tarefa', 'comentario', 'ts', 'categoria']);
+    await appendRow(`${RATINGS_SHEET}!A:H`, [key, actor, target, score, tarefa, comentario, ts, categoria]);
+    bump('ratings', 'avaliacao');
+    lastProcessAt = 0;
+    setTimeout(() => processarCiclos().catch(() => {}), 50);
+    return { ok: true, message: 'Avaliação registrada.', ciclo: key };
+  },
+
+  /** O Apps Script marca os avisos que já mandou por e-mail. */
+  async marcarAvisoEnviado(body) {
+    const id = String(body.id || '').trim();
+    if (!id) throw httpError(400, 'id obrigatório.');
+    const rows = await readRangeOrEmpty(`${AVISOS_SHEET}!A:E`, { fresh: true });
+    const idx = rows.findIndex((r) => getCell(r, 0) === id);
+    if (idx < 0) throw httpError(404, 'Aviso não encontrado.');
+    await writeCells(AVISOS_SHEET, [{ row: idx + 1, col: 4, value: new Date().toISOString() }]);
+    return { ok: true };
+  },
+
   async concluirTarefa(body) {
     const { usuario = 'Morador', photoDataUrl = '', once = false } = body;
     let { tarefaNome = '' } = body;
@@ -1155,6 +1468,14 @@ const postActions = {
     if (created) {
       await appendRows(`${CONFIG_SHEET}!A:B`, DEFAULT_CONFIG);
       bump('config');
+    } else {
+      const rows = await readRangeOrEmpty(`${CONFIG_SHEET}!A:B`, { fresh: true });
+      const have = new Set(rows.map((r) => getCell(r, 0)));
+      const missing = DEFAULT_CONFIG.filter(([k]) => !have.has(k));
+      if (missing.length) {
+        await appendRows(`${CONFIG_SHEET}!A:B`, missing);
+        bump('config');
+      }
     }
     return { ok: true, created, config: await readConfig() };
   },

@@ -288,6 +288,14 @@ export const rateTask = ({ actor, target, tarefa, nota, comentario = '', categor
 // Feed
 export const getTaskFeed = (week = '') => getAction('getTaskFeed', { strict: 1, photos: 0, likes: 1, week });
 export const getFeedPhoto = (ts) => getAction('getFeedPhoto', { ts }, { cache: false });
+
+// Avaliação semanal das tarefas
+export const getAvaliacaoSemana = (usuario) => getAction('getAvaliacaoSemana', { usuario });
+export const getDesempenho = () => getAction('getDesempenho');
+export const entregarTarefa = ({ usuario, ciclo = '', photoDataUrl }) =>
+  postAction('entregarTarefa', { usuario, ciclo, photoDataUrl }, { timeoutMs: 45000 });
+export const avaliarEntrega = ({ actor, target, ciclo, nota, comentario = '', categoria = 'casa' }) =>
+  postAction('avaliarEntrega', { actor, target, ciclo, nota, comentario, categoria });
 export const addTaskFeedComment = ({ actor, content, target = '', tarefa = '', photoDataUrl = '', parentTs = '', parentActor = '' }) =>
   postAction('addTaskFeedComment', { actor, content, target, tarefa, photoDataUrl, parentTs, parentActor }, { timeoutMs: 45000 });
 export const deleteTaskFeedPost = ({ ts, requester }) => postAction('deleteTaskFeedPost', { ts, requester });

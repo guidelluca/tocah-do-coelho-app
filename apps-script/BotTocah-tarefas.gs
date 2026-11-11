@@ -51,6 +51,9 @@ function onOpen() {
       .addItem('🚿 Enviar só Banheirão (separado)', 'rodizioBanheiraoTocah')
       .addItem('🚨 Lembrete Banheirão', 'lembreteBanheiraoTocah')
       .addSeparator()
+      .addItem('⭐ Ligar avisos da avaliação (e-mails de hora em hora)', 'instalarGatilhoAvaliacao')
+      .addItem('⭐ Conferir avaliação agora', 'tickAvaliacaoTocah')
+      .addSeparator()
       .addItem('📱 Atualizar escala no app agora', 'publicarEscalaParaAppComAviso')
       .addItem('📱 Ligar atualização automática do app', 'instalarGatilhoEscalaApp')
       .addToUi();
@@ -99,6 +102,7 @@ function getHtmlSidebar() {
       '<button onclick="run(this,\'configurarEnvioDiario\',null,\'Lembretes diários ligados!\')">📅 Ligar lembretes diários (8h)</button>' +
       '<button onclick="run(this,\'configurarLembreteDomingo\',null,\'Lembrete de domingo ligado!\')">🔔 Ligar lembrete de domingo (18h)</button>' +
       '<button onclick="run(this,\'instalarGatilhoEscalaApp\',null,\'Atualização automática do app ligada!\')">📱 Ligar atualização do app</button>' +
+      '<button onclick="run(this,\'instalarGatilhoAvaliacao\',null,\'Avisos da avaliação ligados!\')">⭐ Ligar avisos da avaliação</button>' +
       '<button class="soft" onclick="google.script.run.mostrarPainelNotificacoes()">🔔 Ver plano de notificações</button>' +
       '<div id="status" role="status"></div>' +
       '<script>' +
@@ -493,6 +497,20 @@ function enviarNotificacoesDiarias() {
 
   var enviados = [];
   var pulados = [];
+
+  // Segunda a quarta: quem ainda não entregou a semana passada recebe o aviso de atraso.
+  var diaSemana = Number(Utilities.formatDate(new Date(), 'America/Sao_Paulo', 'u'));
+  if (diaSemana >= 1 && diaSemana <= 3 && cicloKey_(-1) >= avaliacaoInicio_()) {
+    var feitosAnt = concluidasNoApp_(-1);
+    var atribAnt = getAtribuicoesSemana(-1);
+    atribAnt.forEach(function (a) {
+      if (feitosAnt[normNome_(a.morador.nome)]) return;
+      var html = montarHtmlLembreteDiario(a.morador.nome, a.tarefa.area, a.tarefa.freq, a.tarefa.desc, '', a.tarefa.prazo, 'atrasada');
+      MailApp.sendEmail({ to: a.morador.email, subject: '⚠️ Tarefa da semana passada atrasada · Tocah', htmlBody: html });
+      enviados.push(a.morador.nome + ' (atrasada)');
+    });
+  }
+
   atribuicoes.forEach(function (a) {
     if (feitos[normNome_(a.morador.nome)] && !tarefaDiaria_(a.tarefa)) {
       pulados.push(a.morador.nome);
@@ -678,6 +696,7 @@ function getHtmlPlanoNotificacoes() {
   const temDiario = tem('enviarNotificacoesDiarias');
   const temDomingo = tem('lembreteDomingoPendentes');
   const temApp = tem('publicarEscalaParaApp');
+  const temAvaliacao = tem('tickAvaliacaoTocah');
 
   const tz = 'America/Sao_Paulo';
   const agora = new Date();
@@ -707,7 +726,8 @@ function getHtmlPlanoNotificacoes() {
 
   return htmlPainelDoc_(
       '<div class="hero"><div class="ov light">Automações</div><div class="h1">Plano de notificações</div>' +
-      '<div class="sub">Atualização do app: ' + (temApp ? 'ligada (seg 1h + todo dia 7h)' : 'desligada — ligue pelo menu') + '</div></div>' +
+      '<div class="sub">Atualização do app: ' + (temApp ? 'ligada (seg 1h + todo dia 7h)' : 'desligada — ligue pelo menu') +
+      ' · Avisos da avaliação: ' + (temAvaliacao ? 'de hora em hora' : 'desligados') + '</div></div>' +
       '<div class="card"><table><thead><tr><th>Dia</th><th>Escala</th><th>Diário</th><th>Só quem falta</th></tr></thead><tbody>' +
       linhas + '</tbody></table></div>' +
       '<div class="muted center">Lembretes diários e de domingo pulam quem já marcou a tarefa no app (tarefas diárias sempre recebem o diário).</div>'
@@ -763,6 +783,12 @@ function publicarEscalaParaApp() {
   aba.clearContents();
   aba.getRange(1, 1, linhas.length, linhas[0].length).setNumberFormat('@').setValues(linhas);
   aba.setFrozenRows(1);
+
+  try {
+    publicarCiclosEscala_();
+  } catch (e) {
+    registrarLog('ERRO CiclosEscala', String(e));
+  }
 }
 
 function publicarEscalaParaAppComAviso() {
@@ -1126,17 +1152,23 @@ function montarHtmlEmailUnico(atribuicoes, isLembrete, banheiraoResp, tarefaBanh
 
 function montarHtmlLembreteDiario(nomeMorador, areaResumo, freq, descHtml, extraBanheiraoHtml, prazo, ultimoDia) {
   const periodo = getPeriodoValidade();
-  const preheader = ultimoDia ?
+  const atrasada = ultimoDia === 'atrasada';
+  const preheader = atrasada ?
+      'Sua tarefa da semana passada ainda não foi entregue no app. Dá até quarta 23h59.' :
+      ultimoDia ?
       'Último dia da semana — falta marcar sua tarefa no app.' :
       'Oi, ' + nomeMorador + ' — sua tarefa de hoje na Tocah.';
   var tarefa = { area: areaResumo, prazo: prazo || '', freq: freq, desc: descHtml };
   return (
       htmlEmailDocOpen(preheader) +
       htmlEmailHeroRoxo('Oi, ' + nomeMorador.charAt(0) + nomeMorador.slice(1).toLowerCase() + '!',
-          ultimoDia ? '⏰ Hoje é o último dia da semana' : 'Valeu por cuidar da casa 💜', true, ultimoDia ? 'Último dia' : 'Lembrete do dia') +
+          atrasada ? '⚠️ Tarefa da semana passada atrasada' : ultimoDia ? '⏰ Hoje é o último dia da semana' : 'Valeu por cuidar da casa 💜', true,
+          atrasada ? 'Atraso' : ultimoDia ? 'Último dia' : 'Lembrete do dia') +
       htmlEmailCorpoAbre() +
-      '<tr><td>' + htmlEmailChipPeriodo(periodo) +
-      htmlEmailLead(ultimoDia ?
+      '<tr><td>' + htmlEmailChipPeriodo(atrasada ? getPeriodoValidade(-1) : periodo) +
+      htmlEmailLead(atrasada ?
+          'Ainda não chegou a foto da sua tarefa da semana passada. Entregue no app até <b>quarta 23h59</b> — depois disso entra multa na Caixinha. O atraso em dias fica registrado.' :
+          ultimoDia ?
           'Sua tarefa ainda não está marcada como feita no app. Se já fez, é só marcar; se não, ainda dá tempo:' :
           'Um toque rápido pra manter a rotina em dia. Essa é a sua tarefa da semana:', !!ultimoDia) + '</td></tr>\n' +
       '<tr><td>' + htmlEmailCartaoMorador_(nomeMorador, tarefa, extraBanheiraoHtml || '', true, ultimoDia ? false : undefined) + '</td></tr>\n' +
@@ -1185,19 +1217,22 @@ function inicioSemanaSP_() {
   return new Date(hoje0.getTime() - (diaSemana - 1) * 24 * 60 * 60 * 1000);
 }
 
-/** { NOME: Date } de quem já concluiu a tarefa da semana pelo app. */
-function concluidasNoApp_() {
+/** { NOME: Date } de quem já entregou a tarefa pelo app (semana atual, ou outra com offsetSemanas = -1). */
+function concluidasNoApp_(offsetSemanas) {
   var feitos = {};
   try {
     var aba = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('TarefasFeed');
     if (!aba || aba.getLastRow() < 1) return feitos;
-    var ini = inicioSemanaSP_().getTime();
+    var ini = inicioSemanaSP_().getTime() + (offsetSemanas || 0) * 7 * 86400000;
     var fim = ini + 7 * 24 * 60 * 60 * 1000;
-    var linhas = aba.getRange(1, 1, aba.getLastRow(), 4).getValues(); // semana | ts | tipo | quem
+    var chave = cicloKey_(offsetSemanas || 0);
+    var linhas = aba.getRange(1, 1, aba.getLastRow(), 4).getValues(); // ciclo | ts | tipo | quem
     linhas.forEach(function (l) {
       if (String(l[2]).toLowerCase() !== 'check') return;
       var ts = l[1] instanceof Date ? l[1] : new Date(String(l[1]));
-      if (isNaN(ts.getTime()) || ts.getTime() < ini || ts.getTime() >= fim) return;
+      var ciclo = String(l[0] || '').trim();
+      var daSemana = /^\d{4}-W\d{2}$/.test(ciclo) ? ciclo === chave : (!isNaN(ts.getTime()) && ts.getTime() >= ini && ts.getTime() < fim);
+      if (!daSemana) return;
       var quem = normNome_(l[3]);
       if (quem) feitos[quem] = ts;
     });
@@ -1205,6 +1240,17 @@ function concluidasNoApp_() {
     registrarLog('ERRO status do app', String(e));
   }
   return feitos;
+}
+
+/** Semana em que a avaliação com foto começou (aba Config do app: avaliacaoInicio). */
+function avaliacaoInicio_() {
+  try {
+    var aba = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Config');
+    if (!aba) return '2026-W46';
+    var linhas = aba.getDataRange().getValues();
+    for (var i = 0; i < linhas.length; i++) if (String(linhas[i][0]).trim() === 'avaliacaoInicio') return String(linhas[i][1]).trim();
+  } catch (e) {}
+  return '2026-W46';
 }
 
 function tarefaDiaria_(tarefa) {
@@ -1342,4 +1388,312 @@ function abrirAppDaCasa() {
       '<button class="primary" onclick="window.open(\'' + APP_URL + '\',\'_blank\');google.script.host.close()">Abrir o app 🐰</button>' +
       '<script>window.open(\'' + APP_URL + '\',\'_blank\');</script>')).setWidth(320).setHeight(190);
   SpreadsheetApp.getUi().showModalDialog(html, 'Tocah');
+}
+
+
+/* =====================================================================
+ * AVALIAÇÃO SEMANAL DAS TAREFAS (app) · e-mails, histórico da escala e Drive
+ * O app grava: entregas (TarefasFeed, tipo "check"), notas (AvaliacoesTarefas),
+ * resultado (Desempenho), multas (MultasTarefas) e avisos pendentes (AvisosEmail).
+ * Este script só manda os e-mails dos avisos e guarda as fotos no Drive.
+ * ===================================================================== */
+
+const BACKEND_URL = 'https://tocah-do-coelho-app.onrender.com/api';
+const ABA_CICLOS_ESCALA = 'CiclosEscala';
+const ABA_AVISOS = 'AvisosEmail';
+const PASTA_AVALIACOES = 'Tocah · Avaliações das tarefas';
+
+/** Ciclo (semana ISO "2026-W46") da semana atual + offset, no horário de Brasília. */
+function cicloKey_(offsetSemanas) {
+  var seg = new Date(inicioSemanaSP_().getTime() + (offsetSemanas || 0) * 7 * 86400000 + 12 * 3600000);
+  var d = new Date(Date.UTC(seg.getUTCFullYear(), seg.getUTCMonth(), seg.getUTCDate()));
+  var dia = d.getUTCDay() || 7;
+  d.setUTCDate(d.getUTCDate() + 4 - dia);
+  var inicioAno = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  var semana = Math.ceil(((d - inicioAno) / 86400000 + 1) / 7);
+  return d.getUTCFullYear() + '-W' + (semana < 10 ? '0' : '') + semana;
+}
+
+/** Guarda quem fez o quê em cada semana (o app usa para avaliar a semana passada). */
+function publicarCiclosEscala_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var aba = ss.getSheetByName(ABA_CICLOS_ESCALA);
+  if (!aba) {
+    aba = ss.insertSheet(ABA_CICLOS_ESCALA);
+    aba.appendRow(['ciclo', 'morador', 'tarefa', 'extra', 'atualizadoEm']);
+    aba.setFrozenRows(1);
+  }
+  var dados = aba.getLastRow() > 1 ? aba.getRange(2, 1, aba.getLastRow() - 1, 5).getValues() : [];
+  var agora = new Date().toISOString();
+  [-1, 0].forEach(function (off) {
+    var ciclo = cicloKey_(off);
+    var jaTem = dados.some(function (r) { return String(r[0]) === ciclo; });
+    if (off === -1 && jaTem) return; // semana passada nunca é reescrita
+    var atrib = getAtribuicoesSemana(off);
+    var banh = getBanheiraoSemana(off);
+    var tb = getTarefaBanheirao();
+    var novas = atrib.map(function (a) {
+      return [ciclo, a.morador.nome, nomeBonitoTarefa_(a.tarefa.area), banh && banh.nome === a.morador.nome ? nomeBonitoTarefa_(tb.area) : '', agora];
+    });
+    if (jaTem) {
+      // semana atual: atualiza as linhas (ex.: pulou o rodízio)
+      for (var i = dados.length - 1; i >= 0; i--) {
+        if (String(dados[i][0]) === ciclo) aba.deleteRow(i + 2);
+      }
+      dados = dados.filter(function (r) { return String(r[0]) !== ciclo; });
+    }
+    aba.getRange(aba.getLastRow() + 1, 1, novas.length, 5).setNumberFormat('@').setValues(novas);
+    dados = dados.concat(novas);
+  });
+}
+
+/** Foto de uma entrega (data URL direto ou PHOTO_REF dividido na aba TarefasFotos) → Blob. */
+function fotoDaEntrega_(valor, nomeArquivo) {
+  var dado = String(valor || '').trim();
+  if (!dado) return null;
+  if (dado.indexOf('PHOTO_REF:') === 0) {
+    var id = dado.replace('PHOTO_REF:', '').trim();
+    var aba = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('TarefasFotos');
+    if (!aba || aba.getLastRow() < 1) return null;
+    var colA = aba.getRange(1, 1, aba.getLastRow(), 1).getValues();
+    var partes = [];
+    for (var r = 0; r < colA.length; r++) {
+      if (String(colA[r][0]).trim() !== id) continue;
+      var row = aba.getRange(r + 1, 1, 1, 4).getValues()[0];
+      partes.push({ idx: Number(row[1] || 0), chunk: String(row[3] || '') });
+    }
+    dado = partes.sort(function (a, b) { return a.idx - b.idx; }).map(function (p) { return p.chunk; }).join('');
+  }
+  var m = dado.match(/^data:(image\/[a-z+]+);base64,(.+)$/i);
+  if (!m) return null;
+  try {
+    return Utilities.newBlob(Utilities.base64Decode(m[2]), m[1], nomeArquivo || 'foto.jpg');
+  } catch (e) {
+    return null;
+  }
+}
+
+/** { "ciclo|NOME": valorFoto } das entregas. */
+function fotosDasEntregas_(ciclo) {
+  var out = {};
+  var aba = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('TarefasFeed');
+  if (!aba || aba.getLastRow() < 2) return out;
+  var linhas = aba.getRange(2, 1, aba.getLastRow() - 1, 8).getValues();
+  linhas.forEach(function (l) {
+    if (String(l[0]) !== ciclo || String(l[2]).toLowerCase() !== 'check') return;
+    var nome = normNome_(l[3]);
+    if (!out[nome]) out[nome] = l[7];
+  });
+  return out;
+}
+
+function nomeCurto_(n) {
+  n = String(n || '');
+  return n.charAt(0) + n.slice(1).toLowerCase();
+}
+
+function dataBonita_(iso) {
+  var d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  var dias = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
+  var u = Number(Utilities.formatDate(d, 'America/Sao_Paulo', 'u')) % 7;
+  return dias[u] + ' ' + Utilities.formatDate(d, 'America/Sao_Paulo', "dd/MM, HH'h'mm");
+}
+
+function emailDe_(nome) {
+  var m = getListaMoradores().filter(function (x) { return normNome_(x.nome) === normNome_(nome); })[0];
+  return m ? m.email : '';
+}
+
+function pillStatusEntrega_(e) {
+  if (e.status === 'entregue') {
+    return e.atrasoDias ?
+      htmlEmailPill_('Entregue +' + e.atrasoDias + (e.atrasoDias > 1 ? ' dias' : ' dia'), TOCAH_COR.warningSoft, TOCAH_COR.onWarningSoft) :
+      htmlEmailPill_('✅ No prazo', TOCAH_COR.successSoft, TOCAH_COR.onSuccessSoft);
+  }
+  return htmlEmailPill_('Não entregou', TOCAH_COR.dangerSoft, TOCAH_COR.onDangerSoft);
+}
+
+function cardEntregaEmail_(e, cid) {
+  var ff = htmlEmailFontStack();
+  var foto = cid ?
+    '<img src="cid:' + cid + '" alt="Foto da tarefa de ' + nomeCurto_(e.nome) + '" width="560" style="display:block;width:100%;max-width:560px;height:auto;margin-top:12px;border-radius:16px;" />' :
+    '<div style="margin-top:12px;padding:18px;border-radius:16px;background-color:' + TOCAH_COR.surfaceAlt + ';text-align:center;font-size:13px;font-weight:700;color:' + TOCAH_COR.textMuted + ';">Foto no app</div>';
+  var topo =
+    '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;"><tr>' +
+    '<td width="56" valign="top" style="width:56px;">' + htmlEmailAvatar_(e.nome, 44) + '</td>' +
+    '<td valign="top" style="font-family:' + ff + ';">' +
+    '<div style="font-size:12px;font-weight:800;letter-spacing:0.08em;text-transform:uppercase;color:' + TOCAH_COR.textSubtle + ';">' + e.nome + '</div>' +
+    '<div style="margin-top:2px;font-size:17px;font-weight:900;line-height:1.25;color:' + TOCAH_COR.text + ';">' + nomeBonitoTarefa_(e.tarefa) + (e.extra ? ' + ' + nomeBonitoTarefa_(e.extra) : '') + '</div>' +
+    '</td></tr></table>';
+  return htmlEmailCard_(topo + '<div style="margin-top:10px;">' + pillStatusEntrega_(e) + '</div>' + (e.status === 'entregue' ? foto : ''));
+}
+
+function botaoAvaliar_(texto) {
+  return '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:4px 0 12px;border-collapse:separate;"><tr>' +
+    '<td align="center" style="border-radius:16px;background-color:' + TOCAH_COR.primary + ';">' +
+    '<a href="' + APP_URL + '" style="display:block;padding:15px 18px;font-family:' + htmlEmailFontStack() +
+    ';font-size:15px;font-weight:900;color:#FFFFFF;text-decoration:none;border-radius:16px;">' + texto + '</a></td></tr></table>';
+}
+
+function htmlAvaliacaoAberta_(destNome, aviso, cids) {
+  var p = aviso.payload;
+  var outros = p.entregas.filter(function (e) { return normNome_(e.nome) !== normNome_(destNome); });
+  var entregues = outros.filter(function (e) { return e.status === 'entregue'; });
+  var cards = outros.map(function (e) { return '<tr><td>' + cardEntregaEmail_(e, cids[normNome_(e.nome)]) + '</td></tr>'; }).join('');
+  return htmlEmailDocOpen('Avaliação aberta: avalie ' + entregues.length + ' tarefas até ' + dataBonita_(p.fechamento) + '.') +
+    htmlEmailHeroRoxo('Avaliação da semana', '⭐ Semana ' + p.periodo + ' · fecha ' + dataBonita_(p.fechamento), true, 'Tarefas da casa') +
+    htmlEmailCorpoAbre() +
+    '<tr><td>' + htmlEmailLead('Oi, ' + nomeCurto_(destNome) + '! Todo mundo já mandou a foto (ou o prazo acabou). Avalie as entregas da galera no app — é anônimo, de 1 a 5, com comentário se quiser.') + '</td></tr>' +
+    '<tr><td>' + botaoAvaliar_('Avaliar no app ⭐') + '</td></tr>' +
+    cards +
+    htmlEmailCorpoFecha() + htmlEmailRodape() + htmlEmailDocClose();
+}
+
+function htmlLembreteAvaliacao_(destNome, faltam, aviso) {
+  var p = aviso.payload;
+  return htmlEmailDocOpen('Faltam ' + faltam + ' notas suas na avaliação da semana.') +
+    htmlEmailHeroRoxo('Oi, ' + nomeCurto_(destNome) + '!', '⏰ A avaliação fecha ' + dataBonita_(p.fechamento), true, 'Avaliação da semana') +
+    htmlEmailCorpoAbre() +
+    '<tr><td>' + htmlEmailLead('Faltam <b>' + faltam + '</b> nota' + (faltam > 1 ? 's' : '') + ' suas na avaliação da semana ' + p.periodo + '. Leva 1 minuto.', true) + '</td></tr>' +
+    '<tr><td>' + botaoAvaliar_('Avaliar agora ⭐') + '</td></tr>' +
+    htmlEmailCorpoFecha() + htmlEmailRodape() + htmlEmailDocClose();
+}
+
+function htmlAvaliacaoEncerrada_(aviso, linkPasta) {
+  var p = aviso.payload;
+  var lista = p.resultados.slice().sort(function (a, b) { return (b.media === null ? -1 : b.media) - (a.media === null ? -1 : a.media); });
+  var ff = htmlEmailFontStack();
+  var fmt = function (v) { return v === null || v === undefined ? '—' : Number(v).toFixed(1).replace('.', ','); };
+  var linhas = lista.map(function (r, i) {
+    var sub = r.entregou ? (r.atrasoDias ? 'Entregou com ' + r.atrasoDias + (r.atrasoDias > 1 ? ' dias' : ' dia') + ' de atraso' : 'Entregou no prazo') : 'Não entregou';
+    return '<tr>' +
+      '<td width="30" style="width:30px;padding:10px 0;border-bottom:1px solid ' + TOCAH_COR.border + ';font-family:' + ff + ';font-size:15px;font-weight:900;color:' + TOCAH_COR.primary + ';">' + (i === 0 && r.media !== null ? '🏆' : (i + 1) + 'º') + '</td>' +
+      '<td width="52" style="width:52px;padding:10px 0;border-bottom:1px solid ' + TOCAH_COR.border + ';">' + htmlEmailAvatar_(r.nome, 38) + '</td>' +
+      '<td style="padding:10px 0;border-bottom:1px solid ' + TOCAH_COR.border + ';font-family:' + ff + ';">' +
+      '<div style="font-size:15px;font-weight:900;color:' + TOCAH_COR.text + ';">' + nomeCurto_(r.nome) + '</div>' +
+      '<div style="font-size:12px;font-weight:600;color:' + TOCAH_COR.textMuted + ';">' + sub + '</div>' +
+      (r.multa ? '<div style="margin-top:4px;">' + htmlEmailPill_('Multa R$ ' + r.multa + ' · ' + r.motivo, TOCAH_COR.dangerSoft, TOCAH_COR.onDangerSoft) + '</div>' : '') +
+      '</td>' +
+      '<td align="right" style="padding:10px 0;border-bottom:1px solid ' + TOCAH_COR.border + ';font-family:' + ff + ';font-size:16px;font-weight:900;color:' + TOCAH_COR.text + ';white-space:nowrap;">⭐ ' + fmt(r.media) + '</td>' +
+      '</tr>';
+  }).join('');
+  var tabela = htmlEmailCard_('<div style="font-size:11px;font-weight:800;letter-spacing:0.12em;text-transform:uppercase;color:' + TOCAH_COR.primary + ';">Resultado</div>' +
+    '<div style="margin:2px 0 8px;font-size:19px;font-weight:900;color:' + TOCAH_COR.text + ';">Notas da semana</div>' +
+    '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">' + linhas + '</table>');
+  var temMulta = lista.some(function (r) { return r.multa; });
+  return htmlEmailDocOpen('Resultado da avaliação da semana ' + p.periodo + '.') +
+    htmlEmailHeroRoxo('Resultado da semana', '🏁 Semana ' + p.periodo, true, 'Avaliação encerrada') +
+    htmlEmailCorpoAbre() +
+    '<tr><td>' + tabela + '</td></tr>' +
+    (temMulta ? '<tr><td>' + htmlEmailLead('As multas já foram lançadas na Caixinha automaticamente.') + '</td></tr>' : '') +
+    (linkPasta ? '<tr><td>' + htmlEmailLead('📁 As fotos dessa semana ficaram guardadas no Drive: <a href="' + linkPasta + '" style="color:' + TOCAH_COR.primary + ';font-weight:800;">abrir pasta</a>.') + '</td></tr>' : '') +
+    '<tr><td>' + botaoAvaliar_('Ver ranking no app 🏆') + '</td></tr>' +
+    htmlEmailCorpoFecha() + htmlEmailRodape() + htmlEmailDocClose();
+}
+
+/** Guarda as fotos da semana numa pasta do Drive. Retorna o link da pasta. */
+function arquivarFotosNoDrive_(ciclo, periodo, entregas) {
+  try {
+    var it = DriveApp.getFoldersByName(PASTA_AVALIACOES);
+    var raiz = it.hasNext() ? it.next() : DriveApp.createFolder(PASTA_AVALIACOES);
+    var nomePasta = ciclo + ' · ' + periodo.replace(/\//g, '-');
+    var itS = raiz.getFoldersByName(nomePasta);
+    var pasta = itS.hasNext() ? itS.next() : raiz.createFolder(nomePasta);
+    var fotos = fotosDasEntregas_(ciclo);
+    entregas.forEach(function (e) {
+      var nome = normNome_(e.nome);
+      if (!fotos[nome]) return;
+      var arquivo = nome + ' - ' + nomeBonitoTarefa_(e.tarefa).replace(/[\\/:*?"<>|]/g, '') + '.jpg';
+      if (pasta.getFilesByName(arquivo).hasNext()) return;
+      var blob = fotoDaEntrega_(fotos[nome], arquivo);
+      if (blob) pasta.createFile(blob);
+    });
+    return pasta.getUrl();
+  } catch (e) {
+    registrarLog('ERRO arquivo no Drive', String(e));
+    return '';
+  }
+}
+
+/**
+ * Roda de hora em hora: acorda o app (processa prazos), lê os avisos pendentes e manda os e-mails.
+ */
+function tickAvaliacaoTocah() {
+  try {
+    UrlFetchApp.fetch(BACKEND_URL + '?action=tickAvaliacao', { muteHttpExceptions: true, followRedirects: true });
+  } catch (e) {
+    // servidor dormindo: tenta de novo na próxima hora; os avisos já gravados seguem abaixo
+  }
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var aba = ss.getSheetByName(ABA_AVISOS);
+  if (!aba || aba.getLastRow() < 2) return;
+  var linhas = aba.getRange(2, 1, aba.getLastRow() - 1, 6).getValues();
+  linhas.forEach(function (l, i) {
+    if (String(l[4] || '').trim()) return; // já enviado
+    var aviso = { id: l[0], tipo: String(l[1]), ciclo: String(l[2]), payload: {} };
+    try {
+      aviso.payload = JSON.parse(String(l[5] || '{}'));
+    } catch (e) {
+      return;
+    }
+    try {
+      enviarAviso_(aviso);
+      aba.getRange(i + 2, 5).setValue(new Date().toISOString());
+      registrarLog('Aviso de avaliação', aviso.id + ' enviado');
+    } catch (e) {
+      registrarLog('ERRO aviso de avaliação', aviso.id + ': ' + String(e));
+    }
+  });
+}
+
+function enviarAviso_(aviso) {
+  var p = aviso.payload || {};
+  if (aviso.tipo === 'avaliacao_aberta') {
+    var fotos = fotosDasEntregas_(aviso.ciclo);
+    var blobs = {};
+    (p.entregas || []).forEach(function (e) {
+      var n = normNome_(e.nome);
+      if (e.status === 'entregue' && fotos[n]) {
+        var b = fotoDaEntrega_(fotos[n], 'tarefa-' + n.toLowerCase() + '.jpg');
+        if (b) blobs[n] = b;
+      }
+    });
+    getListaMoradores().forEach(function (m) {
+      var cids = {};
+      var inline = {};
+      Object.keys(blobs).forEach(function (n) {
+        if (n === normNome_(m.nome)) return;
+        cids[n] = 'tarefa' + n.toLowerCase();
+        inline[cids[n]] = blobs[n];
+      });
+      MailApp.sendEmail({
+        to: m.email,
+        subject: '⭐ Avaliação da semana aberta · Tocah',
+        htmlBody: htmlAvaliacaoAberta_(m.nome, aviso, cids),
+        inlineImages: inline,
+      });
+    });
+  } else if (aviso.tipo === 'lembrete_avaliacao') {
+    (p.pendentes || []).forEach(function (x) {
+      var email = emailDe_(x.nome);
+      if (!email) return;
+      MailApp.sendEmail({ to: email, subject: '⏰ Faltam suas notas na avaliação · Tocah', htmlBody: htmlLembreteAvaliacao_(x.nome, x.faltam, aviso) });
+    });
+  } else if (aviso.tipo === 'avaliacao_encerrada') {
+    var link = arquivarFotosNoDrive_(aviso.ciclo, p.periodo || aviso.ciclo, p.resultados || []);
+    var todos = getListaMoradores().map(function (m) { return m.email; }).join(', ');
+    MailApp.sendEmail({ to: todos, subject: '🏁 Resultado da avaliação da semana · Tocah', htmlBody: htmlAvaliacaoEncerrada_(aviso, link) });
+  }
+}
+
+function instalarGatilhoAvaliacao() {
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === 'tickAvaliacaoTocah') ScriptApp.deleteTrigger(t);
+  });
+  ScriptApp.newTrigger('tickAvaliacaoTocah').timeBased().everyHours(1).create();
+  tickAvaliacaoTocah();
+  try {
+    SpreadsheetApp.getUi().alert('✅ Avisos da avaliação ligados: de hora em hora o script confere e manda os e-mails.');
+  } catch (e) {}
 }

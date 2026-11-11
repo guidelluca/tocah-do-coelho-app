@@ -1,4 +1,6 @@
 import {
+  getAvaliacaoSemana,
+  getDesempenho,
   getCaixinha,
   getConfig,
   getEscalaSemana,
@@ -32,3 +34,8 @@ export const useFeed = (week = '') =>
 export const useNilde = () => useResource('nilde', getNildeWeek, { resources: ['feed'], cacheQuery: queryFor('getNildeWeek') });
 
 export const useConfig = () => useResource('config', getConfig, { resources: ['config'], cacheQuery: queryFor('getConfig') });
+
+export const useAvaliacao = (resident) =>
+  useResource(`avaliacao:${resident}`, () => getAvaliacaoSemana(resident), { resources: ['avaliacao', 'feed', 'ratings', 'escala'], cacheQuery: queryFor('getAvaliacaoSemana', { usuario: resident }) });
+
+export const useDesempenho = () => useResource('desempenho', getDesempenho, { resources: ['avaliacao'], cacheQuery: queryFor('getDesempenho') });

@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { concluirTarefa } from '../services/api';
+import { avaliarEntrega, concluirTarefa, entregarTarefa } from '../services/api';
 import { useFeedback } from '../components/ui';
 import { pickPhoto } from '../utils/photo';
 import { invalidateResources, mutateResource } from './store';
@@ -36,4 +36,63 @@ export function useCompleteTask(resident) {
     }
   }, [resident, toast, toastError]);
   return { complete, busy };
+}
+
+/** Entrega da tarefa com foto (uma vez por semana; vale a semana passada até quarta). Retorna a foto escolhida para confirmar. */
+export function useEntregarTarefa(resident) {
+  const { toast, toastError } = useFeedback();
+  const [busy, setBusy] = useState(false);
+  const escolherFoto = useCallback(async (source = 'camera') => {
+    try {
+      const photo = await pickPhoto({ source, size: 'proof' });
+      if (!photo) toast('Precisa de uma foto da tarefa feita.', 'warning');
+      return photo || '';
+    } catch (e) {
+      toastError(e);
+      return '';
+    }
+  }, [toast, toastError]);
+  const enviar = useCallback(async ({ ciclo, photoDataUrl }) => {
+    setBusy(true);
+    try {
+      const res = await entregarTarefa({ usuario: resident, ciclo, photoDataUrl });
+      toast(res?.atrasoDias ? `Tarefa entregue com ${res.atrasoDias} dia${res.atrasoDias > 1 ? 's' : ''} de atraso.` : 'Tarefa entregue no prazo! Mandou bem. 🐰', 'success');
+      return true;
+    } catch (e) {
+      if (e?.code === 'ALREADY_DONE') toast('Essa semana já estava entregue.', 'info');
+      else toastError(e, 'Não deu para entregar a tarefa.');
+      return false;
+    } finally {
+      setBusy(false);
+      invalidateResources('avaliacao', 'feed', 'escala');
+    }
+  }, [resident, toast, toastError]);
+  return { escolherFoto, enviar, busy };
+}
+
+/** Avaliar uma entrega (casa e, se tiver, banheirão) de uma vez. */
+export function useAvaliarEntrega(resident) {
+  const { toast, toastError } = useFeedback();
+  const [busyTarget, setBusyTarget] = useState('');
+  const avaliar = useCallback(async ({ ciclo, target, notas, comentario }) => {
+    setBusyTarget(target);
+    try {
+      for (const [categoria, nota] of Object.entries(notas)) {
+        try {
+          await avaliarEntrega({ actor: resident, target, ciclo, nota, comentario: categoria === 'casa' ? comentario : '', categoria });
+        } catch (e) {
+          if (e?.code !== 'ALREADY_RATED') throw e;
+        }
+      }
+      toast('Avaliação enviada (anônima).', 'success');
+      return true;
+    } catch (e) {
+      toastError(e, 'Não deu para enviar a avaliação.');
+      return false;
+    } finally {
+      setBusyTarget('');
+      invalidateResources('avaliacao', 'ratings');
+    }
+  }, [resident, toast, toastError]);
+  return { avaliar, busyTarget };
 }
