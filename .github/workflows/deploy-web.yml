@@ -33,7 +33,11 @@ jobs:
       - name: Export Expo web build
         env:
           EXPO_PUBLIC_API_URL: https://tocah-do-coelho-app.onrender.com/api
+          EXPO_PUBLIC_APP_VERSION: ${{ github.sha }}
         run: npm run build:web
+
+      - name: Write version.json (aviso de versão nova no app)
+        run: echo "{\"v\":\"${{ github.sha }}\"}" > dist/version.json
 
       - name: Setup Pages
         uses: actions/configure-pages@v6

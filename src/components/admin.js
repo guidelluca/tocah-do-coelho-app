@@ -356,6 +356,7 @@ function MultasAdmin({ painel, token, reload }) {
   const { spacing } = useTheme();
   const { toast, toastError } = useFeedback();
   const [retirar, setRetirar] = useState(null);
+  const [decidir, setDecidir] = useState(null);
   const [nova, setNova] = useState(false);
   const [morador, setMorador] = useState('');
   const [valor, setValor] = useState(String(painel.regras?.avaliacaoMultaValor ?? 60));
@@ -371,6 +372,7 @@ function MultasAdmin({ painel, token, reload }) {
       invalidateResources('caixinha', 'avaliacao');
       await reload();
       setRetirar(null);
+      setDecidir(null);
       setNova(false);
       setMotivo('');
     } catch (e) {
@@ -395,8 +397,13 @@ function MultasAdmin({ painel, token, reload }) {
                 <AppText variant="bodyStrong">{displayName(m.nome)} · R$ {m.valor}</AppText>
                 <AppText variant="caption" color="textMuted" numberOfLines={2}>{m.ciclo} · {m.motivo}{m.obs ? ` · ${m.obs}` : ''}</AppText>
               </View>
-              {m.status === 'RETIRADA' ? (
-                <StatusPill label="Retirada" tone="neutral" />
+              {m.status === 'RETIRADA' || m.status === 'DESCARTADA' ? (
+                <StatusPill label={m.status === 'RETIRADA' ? 'Retirada' : 'Descartada'} tone="neutral" />
+              ) : m.status === 'PENDENTE' ? (
+                <View style={{ gap: spacing.xs }}>
+                  <StatusPill label="Pendente" tone="warning" />
+                  <Button label="Decidir" size="sm" variant="secondary" onPress={() => setDecidir(m)} />
+                </View>
               ) : (
                 <Button label="Retirar" size="sm" variant="secondary" onPress={() => setRetirar(m)} />
               )}
@@ -405,6 +412,23 @@ function MultasAdmin({ painel, token, reload }) {
           </View>
         ))}
       </Card>
+      <BottomSheet
+        visible={!!decidir}
+        onClose={() => !busy && setDecidir(null)}
+        title={decidir ? `Multa pendente de ${displayName(decidir.nome)}` : ''}
+        footer={
+          <View style={[styles.row, { gap: spacing.sm, flex: 1 }]}>
+            <Button label="Descartar" variant="secondary" onPress={() => run('adminDecidirMulta', { ciclo: decidir.ciclo, morador: decidir.nome, decisao: 'descartar' })} disabled={busy} style={{ flex: 1 }} />
+            <Button label={`Lançar R$ ${decidir?.valor ?? ''}`} onPress={() => run('adminDecidirMulta', { ciclo: decidir.ciclo, morador: decidir.nome, decisao: 'confirmar' })} loading={busy} style={{ flex: 1 }} />
+          </View>
+        }
+      >
+        {!!decidir && (
+          <AppText variant="body" color="textMuted">
+            Semana {decidir.ciclo}: {decidir.motivo}. Multa por média baixa não sai sozinha, pra evitar nota combinada. Confira as fotos e as notas antes de decidir.
+          </AppText>
+        )}
+      </BottomSheet>
       <MotivoSheet
         visible={!!retirar}
         titulo={retirar ? `Retirar multa de ${displayName(retirar.nome)}?` : ''}
@@ -431,9 +455,10 @@ function RegrasAdmin({ painel, token, reload }) {
   const { toast, toastError } = useFeedback();
   const r = painel.regras || {};
   const [auto, setAuto] = useState(!!r.avaliacaoMultaAuto);
+  const [mediaAuto, setMediaAuto] = useState(!!r.avaliacaoMultaMediaAuto);
   const [valor, setValor] = useState(String(r.avaliacaoMultaValor ?? 60));
   const [media, setMedia] = useState(String(r.avaliacaoMediaMinima ?? 3).replace('.', ','));
-  const [minAv, setMinAv] = useState(String(r.avaliacaoMinAvaliacoes ?? 2));
+  const [minAv, setMinAv] = useState(String(r.avaliacaoMinAvaliacoes ?? 3));
   const [tol, setTol] = useState(Number(r.avaliacaoToleranciaDias ?? 3));
   const [grupo, setGrupo] = useState(String(r.banheiraoGrupo || 'ALLAN,GUSTAVO,RAMON').split(','));
   const [busy, setBusy] = useState(false);
@@ -442,7 +467,7 @@ function RegrasAdmin({ painel, token, reload }) {
     try {
       await adminAcao('adminRegras', {
         adminToken: token,
-        regras: { avaliacaoMultaAuto: auto, avaliacaoMultaValor: valor.replace(',', '.'), avaliacaoMediaMinima: media.replace(',', '.'), avaliacaoMinAvaliacoes: minAv, avaliacaoToleranciaDias: tol, banheiraoGrupo: grupo.join(',') },
+        regras: { avaliacaoMultaAuto: auto, avaliacaoMultaMediaAuto: mediaAuto, avaliacaoMultaValor: valor.replace(',', '.'), avaliacaoMediaMinima: media.replace(',', '.'), avaliacaoMinAvaliacoes: minAv, avaliacaoToleranciaDias: tol, banheiraoGrupo: grupo.join(',') },
       });
       toast('Regras salvas.', 'success');
       invalidateResources('avaliacao', 'config');
@@ -461,6 +486,11 @@ function RegrasAdmin({ painel, token, reload }) {
       <View style={[styles.wrap, { gap: spacing.sm, marginVertical: spacing.sm }]}>
         <Chip label="Ligada" icon="check" selected={auto} onPress={() => setAuto(true)} />
         <Chip label="Desligada" icon="close" selected={!auto} onPress={() => setAuto(false)} />
+      </View>
+      <AppText variant="captionStrong" color="textMuted">Multa por média baixa</AppText>
+      <View style={[styles.wrap, { gap: spacing.sm, marginVertical: spacing.sm }]}>
+        <Chip label="Eu confirmo antes (recomendado)" icon="account-check-outline" selected={!mediaAuto} onPress={() => setMediaAuto(false)} />
+        <Chip label="Automática" icon="flash-outline" selected={mediaAuto} onPress={() => setMediaAuto(true)} />
       </View>
       <TextField label="Valor da multa" prefix="R$" value={valor} onChangeText={setValor} keyboardType="decimal-pad" />
       <TextField label="Multa se a média ficar abaixo de" value={media} onChangeText={setMedia} keyboardType="decimal-pad" hint="De 0 a 5. Ex.: 3" />
@@ -481,6 +511,54 @@ function RegrasAdmin({ painel, token, reload }) {
       <Button label="Salvar regras" icon="content-save-outline" onPress={salvar} loading={busy} full style={{ marginTop: spacing.sm }} />
       <AppText variant="caption" color="textSubtle" style={{ marginTop: spacing.sm }}>Vale a partir da próxima conta do app. Semanas já encerradas não mudam.</AppText>
     </Card>
+  );
+}
+
+function SegurancaAdmin({ painel, token, reload }) {
+  const { spacing } = useTheme();
+  const { toast, toastError } = useFeedback();
+  const [busy, setBusy] = useState('');
+  const resetar = async (n) => {
+    setBusy(n);
+    try {
+      const res = await adminAcao('adminResetarPinMorador', { adminToken: token, morador: n });
+      toast(res?.message || 'PIN apagado.', 'success');
+      await reload();
+    } catch (e) {
+      toastError(e);
+    } finally {
+      setBusy('');
+    }
+  };
+  return (
+    <>
+      <Card style={{ marginBottom: spacing.md }}>
+        <AppText variant="heading" style={{ marginBottom: spacing.sm }}>Diagnóstico</AppText>
+        {(painel.diagnostico || []).map((d) => (
+          <View key={d.id} style={[styles.row, { gap: spacing.sm, alignItems: 'flex-start', paddingVertical: spacing.xs }]}>
+            <Icon name={d.ok ? 'check-circle' : 'alert-circle'} color={d.ok ? 'success' : 'warning'} size={20} />
+            <AppText variant="body" style={{ flex: 1 }}>{d.texto}</AppText>
+          </View>
+        ))}
+      </Card>
+      <Card style={{ marginBottom: spacing.md }}>
+        <AppText variant="heading">PIN dos moradores</AppText>
+        <AppText variant="caption" color="textMuted" style={{ marginBottom: spacing.sm }}>Cada um cria o seu na primeira entrega ou avaliação. Se alguém esquecer, apague aqui e ele cria outro.</AppText>
+        {RESIDENTES.map((n) => (
+          <View key={n} style={[styles.rowBetween, { paddingVertical: spacing.xs }]}>
+            <View style={[styles.row, { gap: spacing.sm }]}>
+              <Avatar name={n} size={28} />
+              <AppText variant="body">{displayName(n)}</AppText>
+            </View>
+            {painel.pins?.[n] ? (
+              <Button label="Apagar PIN" size="sm" variant="ghost" onPress={() => resetar(n)} loading={busy === n} />
+            ) : (
+              <StatusPill label="Sem PIN" tone="warning" />
+            )}
+          </View>
+        ))}
+      </Card>
+    </>
   );
 }
 
@@ -538,13 +616,15 @@ export function AdminTab() {
     <>
       <View style={[styles.wrap, { gap: spacing.sm, marginBottom: spacing.md }]}>
         <Chip label="Semana" icon="calendar-week" selected={sec === 'semana'} onPress={() => setSec('semana')} />
-        <Chip label="Multas" icon="cash-remove" selected={sec === 'multas'} onPress={() => setSec('multas')} count={(painel.multas || []).filter((m) => m.status !== 'RETIRADA').length || undefined} />
+        <Chip label="Multas" icon="cash-remove" selected={sec === 'multas'} onPress={() => setSec('multas')} count={(painel.multas || []).filter((m) => m.status === 'PENDENTE').length || undefined} />
         <Chip label="Regras" icon="tune" selected={sec === 'regras'} onPress={() => setSec('regras')} />
+        <Chip label="Segurança" icon="shield-check-outline" selected={sec === 'seguranca'} onPress={() => setSec('seguranca')} count={(painel.diagnostico || []).filter((d) => !d.ok).length || undefined} />
         <Chip label="Registro" icon="history" selected={sec === 'registro'} onPress={() => setSec('registro')} />
       </View>
       {sec === 'semana' && <SemanaAdmin painel={painel} token={token} reload={carregar} />}
       {sec === 'multas' && <MultasAdmin painel={painel} token={token} reload={carregar} />}
       {sec === 'regras' && <RegrasAdmin painel={painel} token={token} reload={carregar} />}
+      {sec === 'seguranca' && <SegurancaAdmin painel={painel} token={token} reload={carregar} />}
       {sec === 'registro' && <RegistroAdmin painel={painel} />}
       <Button label="Sair da administração" icon="logout" variant="ghost" onPress={() => save('')} full />
     </>

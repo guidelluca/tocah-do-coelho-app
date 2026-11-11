@@ -3,6 +3,7 @@ import { avaliarEntrega, concluirTarefa, entregarTarefa } from '../services/api'
 import { useFeedback } from '../components/ui';
 import { pickPhoto } from '../utils/photo';
 import { invalidateResources, mutateResource } from './store';
+import { useMoradorPin } from '../context/MoradorPinContext';
 
 /** Concluir a própria tarefa: foto obrigatória → grava o check → todo mundo vê "Feita". */
 export function useCompleteTask(resident) {
@@ -41,6 +42,7 @@ export function useCompleteTask(resident) {
 /** Entrega da tarefa com foto (uma vez por semana; vale a semana passada até quarta). Retorna a foto escolhida para confirmar. */
 export function useEntregarTarefa(resident) {
   const { toast, toastError } = useFeedback();
+  const { comPin } = useMoradorPin();
   const [busy, setBusy] = useState(false);
   const escolherFoto = useCallback(async (source = 'camera') => {
     try {
@@ -55,31 +57,32 @@ export function useEntregarTarefa(resident) {
   const enviar = useCallback(async ({ ciclo, photos }) => {
     setBusy(true);
     try {
-      const res = await entregarTarefa({ usuario: resident, ciclo, photos });
+      const res = await comPin(resident, (moradorToken) => entregarTarefa({ usuario: resident, ciclo, photos, moradorToken }));
       toast(res?.atrasoDias ? `Tarefa entregue com ${res.atrasoDias} dia${res.atrasoDias > 1 ? 's' : ''} de atraso.` : 'Tarefa entregue no prazo! Mandou bem. 🐰', 'success');
       return true;
     } catch (e) {
       if (e?.code === 'ALREADY_DONE') toast('Essa semana já estava entregue.', 'info');
-      else toastError(e, 'Não deu para entregar a tarefa.');
+      else if (e?.code !== 'PIN_CANCELADO') toastError(e, 'Não deu para entregar a tarefa.');
       return false;
     } finally {
       setBusy(false);
       invalidateResources('avaliacao', 'feed', 'escala');
     }
-  }, [resident, toast, toastError]);
+  }, [resident, toast, toastError, comPin]);
   return { escolherFoto, enviar, busy };
 }
 
 /** Avaliar uma entrega (casa e, se tiver, banheirão) de uma vez. */
 export function useAvaliarEntrega(resident) {
   const { toast, toastError } = useFeedback();
+  const { comPin } = useMoradorPin();
   const [busyTarget, setBusyTarget] = useState('');
   const avaliar = useCallback(async ({ ciclo, target, notas, comentario }) => {
     setBusyTarget(target);
     try {
       for (const [categoria, nota] of Object.entries(notas)) {
         try {
-          await avaliarEntrega({ actor: resident, target, ciclo, nota, comentario: categoria === 'casa' ? comentario : '', categoria });
+          await comPin(resident, (moradorToken) => avaliarEntrega({ actor: resident, target, ciclo, nota, comentario: categoria === 'casa' ? comentario : '', categoria, moradorToken }));
         } catch (e) {
           if (e?.code !== 'ALREADY_RATED') throw e;
         }
@@ -87,12 +90,12 @@ export function useAvaliarEntrega(resident) {
       toast('Avaliação enviada (anônima).', 'success');
       return true;
     } catch (e) {
-      toastError(e, 'Não deu para enviar a avaliação.');
+      if (e?.code !== 'PIN_CANCELADO') toastError(e, 'Não deu para enviar a avaliação.');
       return false;
     } finally {
       setBusyTarget('');
       invalidateResources('avaliacao', 'ratings');
     }
-  }, [resident, toast, toastError]);
+  }, [resident, toast, toastError, comPin]);
   return { avaliar, busyTarget };
 }

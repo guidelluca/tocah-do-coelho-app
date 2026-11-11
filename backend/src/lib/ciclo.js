@@ -11,8 +11,26 @@
 const { isoWeekFromYmd, spDateKey, pad2 } = require('./time');
 const { norm } = require('./text');
 
-const OFFSET = '-03:00';
 const DAY = 24 * 60 * 60 * 1000;
+
+/** Fuso de São Paulo no dia (hoje -03:00; se o horário de verão voltar, vira -02:00 sozinho). */
+const offsetCache = new Map();
+function spOffset(ymd) {
+  if (offsetCache.has(ymd)) return offsetCache.get(ymd);
+  let out = '-03:00';
+  try {
+    const probe = new Date(`${ymd}T15:00:00Z`);
+    const name = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Sao_Paulo', timeZoneName: 'shortOffset' })
+      .formatToParts(probe)
+      .find((p) => p.type === 'timeZoneName')?.value || '';
+    const m = name.match(/GMT([+-])(\d{1,2})(?::(\d{2}))?/);
+    if (m) out = `${m[1]}${String(m[2]).padStart(2, '0')}:${m[3] || '00'}`;
+  } catch {
+    /* mantém -03:00 */
+  }
+  offsetCache.set(ymd, out);
+  return out;
+}
 
 const DEFAULT_RULES = {
   prazoDias: 6, // domingo (segunda + 6)
@@ -20,9 +38,13 @@ const DEFAULT_RULES = {
   toleranciaDias: 9, // quarta seguinte
   fechamentoDias: 13, // domingo seguinte
   multaAuto: true,
+  /** Multa por média baixa: false = fica pendente até o admin confirmar (evita "combinar" nota baixa). */
+  multaMediaAuto: false,
   multaValor: 60,
   mediaMinima: 3,
-  minAvaliacoes: 2,
+  minAvaliacoes: 3,
+  /** Notas ao vivo só aparecem a partir de N notas (protege o anonimato). */
+  minNotasAoVivo: 2,
   /** Só quem entra no rodízio do banheirão avalia o banheirão. */
   banheiraoGrupo: ['ALLAN', 'GUSTAVO', 'RAMON'],
 };
@@ -43,6 +65,7 @@ function rulesFromConfig(config = {}) {
     ...DEFAULT_RULES,
     toleranciaDias: 6 + Math.max(0, Math.min(6, num(config.avaliacaoToleranciaDias, 3))),
     multaAuto: bool(config.avaliacaoMultaAuto, DEFAULT_RULES.multaAuto),
+    multaMediaAuto: bool(config.avaliacaoMultaMediaAuto, DEFAULT_RULES.multaMediaAuto),
     multaValor: Math.max(0, num(config.avaliacaoMultaValor, DEFAULT_RULES.multaValor)),
     mediaMinima: num(config.avaliacaoMediaMinima, DEFAULT_RULES.mediaMinima),
     minAvaliacoes: Math.max(1, Math.round(num(config.avaliacaoMinAvaliacoes, DEFAULT_RULES.minAvaliacoes))),
@@ -55,7 +78,7 @@ function rulesFromConfig(config = {}) {
 /* ---------- datas ---------- */
 
 function ymdToUtcNoon(ymd) {
-  return Date.parse(`${ymd}T12:00:00${OFFSET}`);
+  return Date.parse(`${ymd}T12:00:00${spOffset(ymd)}`);
 }
 
 function addDays(ymd, n) {
@@ -63,11 +86,11 @@ function addDays(ymd, n) {
 }
 
 function endOfDay(ymd) {
-  return Date.parse(`${ymd}T23:59:59.999${OFFSET}`);
+  return Date.parse(`${ymd}T23:59:59.999${spOffset(ymd)}`);
 }
 
 function startOfDay(ymd) {
-  return Date.parse(`${ymd}T00:00:00${OFFSET}`);
+  return Date.parse(`${ymd}T00:00:00${spOffset(ymd)}`);
 }
 
 /** Segunda-feira (YYYY-MM-DD) da semana de `date` em São Paulo. */
@@ -291,7 +314,7 @@ function buildCycleState({ key, now = Date.now(), escala = [], checks = {}, rati
 }
 
 /** Notas parciais de cada um (anônimas), para acompanhar a avaliação ao vivo. */
-function notasAoVivo(state) {
+function notasAoVivo(state, rules = DEFAULT_RULES) {
   const esperadasPor = {};
   const rows = state._rows || [];
   state.residents.forEach((r) => {
@@ -307,17 +330,23 @@ function notasAoVivo(state) {
     const casa = mine.filter((x) => (String(x[7] || 'casa').trim().toLowerCase() || 'casa') === 'casa').map((x) => Number(x[3])).filter(Number.isFinite);
     const ban = mine.filter((x) => String(x[7] || '').trim().toLowerCase() === 'banheirao').map((x) => Number(x[3])).filter(Number.isFinite);
     const media = (l) => (l.length ? Math.round((l.reduce((a, b) => a + b, 0) / l.length) * 100) / 100 : null);
-    const dist = [1, 2, 3, 4, 5].map((n) => casa.filter((v) => v === n).length);
+    const encerrada = state.phase === 'encerrada';
+    const minimo = Math.max(1, rules.minNotasAoVivo || 2);
+    const espBan = r.banheirao ? esperadasPor[r.nome]?.banheirao || 0 : 0;
+    // Com poucas notas daria pra saber quem deu: mostra a média só a partir de N notas
+    // (banheirão: só quando todos do grupo avaliaram ou fechou).
+    const mostraCasa = encerrada || casa.length >= minimo;
+    const mostraBan = encerrada || (espBan > 0 && ban.length >= espBan);
     return {
       nome: r.nome,
       status: r.status,
-      media: media(casa),
+      media: mostraCasa ? media(casa) : null,
+      aguardando: !mostraCasa && casa.length > 0,
       notas: casa.length,
       esperadas: esperadasPor[r.nome]?.casa || 0,
-      mediaBanheirao: r.banheirao ? media(ban) : null,
+      mediaBanheirao: r.banheirao && mostraBan ? media(ban) : null,
       notasBanheirao: r.banheirao ? ban.length : 0,
-      esperadasBanheirao: r.banheirao ? esperadasPor[r.nome]?.banheirao || 0 : 0,
-      distribuicao: dist,
+      esperadasBanheirao: espBan,
     };
   });
 }
@@ -352,10 +381,13 @@ function cycleResults(state, rules = DEFAULT_RULES) {
     const dispensado = r.status === 'dispensado';
     const media = casa.length ? Math.round(avg(casa) * 100) / 100 : null;
     const motivos = [];
+    let pendente = '';
     if (rules.multaAuto && rules.multaValor > 0 && !dispensado) {
       if (!entregou) motivos.push('não entregou a tarefa até o fim da tolerância');
       else if (media !== null && casa.length >= rules.minAvaliacoes && media < rules.mediaMinima) {
-        motivos.push(`média ${media.toFixed(1).replace('.', ',')} abaixo de ${String(rules.mediaMinima).replace('.', ',')}`);
+        const m = `média ${media.toFixed(1).replace('.', ',')} abaixo de ${String(rules.mediaMinima).replace('.', ',')}`;
+        if (rules.multaMediaAuto) motivos.push(m);
+        else pendente = m;
       }
     }
     return {
@@ -372,6 +404,8 @@ function cycleResults(state, rules = DEFAULT_RULES) {
       comentarios,
       multa: motivos.length ? rules.multaValor : 0,
       motivo: motivos.join('; '),
+      multaPendente: pendente ? rules.multaValor : 0,
+      motivoPendente: pendente,
     };
   });
 }
@@ -520,6 +554,7 @@ module.exports = {
   deadlineFor,
   lateDays,
   podeAvaliarBanheirao,
+  spOffset,
   isLavanderia,
   hasBanheirao,
   buildCycleState,

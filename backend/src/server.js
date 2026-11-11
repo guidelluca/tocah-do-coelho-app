@@ -71,7 +71,8 @@ const DEFAULT_CONFIG = [
   ['avaliacaoMultaAuto', 'sim'],
   ['avaliacaoMultaValor', '60'],
   ['avaliacaoMediaMinima', '3'],
-  ['avaliacaoMinAvaliacoes', '2'],
+  ['avaliacaoMinAvaliacoes', '3'],
+  ['avaliacaoMultaMediaAuto', 'não'],
   ['banheiraoGrupo', 'ALLAN,GUSTAVO,RAMON'],
 ];
 
@@ -157,6 +158,48 @@ async function readRange(range, { fresh = false } = {}) {
     if (isQuotaError(error) && cached?.values) return cached.values;
     throw error;
   }
+}
+
+/** Várias faixas numa requisição só (conta como 1 leitura na cota do Google). Reaproveita o cache. */
+const inflightBatch = new Map();
+async function readRangesBatch(ranges, { fresh = false } = {}) {
+  const keys = ranges.map((r) => String(r).trim());
+  const out = {};
+  const missing = [];
+  keys.forEach((k) => {
+    const c = readCache.get(k);
+    if (!fresh && c && c.expiresAt > Date.now()) out[k] = c.values;
+    else missing.push(k);
+  });
+  if (missing.length) {
+    const id = missing.join('|');
+    if (!inflightBatch.has(id)) {
+      inflightBatch.set(id, (async () => {
+        try {
+          const sheets = await getSheetsApi();
+          const res = await sheets.spreadsheets.values.batchGet({ spreadsheetId: SPREADSHEET_ID, ranges: missing });
+          const got = {};
+          (res.data.valueRanges || []).forEach((vr, i) => {
+            got[missing[i]] = vr.values || [];
+            readCache.set(missing[i], { values: got[missing[i]], expiresAt: Date.now() + READ_CACHE_TTL_MS });
+          });
+          return got;
+        } finally {
+          setTimeout(() => inflightBatch.delete(id), 0);
+        }
+      })());
+    }
+    try {
+      Object.assign(out, await inflightBatch.get(id));
+    } catch (error) {
+      // cota estourada: usa o que tiver em cache (mesmo vencido)
+      if (!isQuotaError(error)) throw error;
+      missing.forEach((k) => {
+        out[k] = readCache.get(k)?.values || [];
+      });
+    }
+  }
+  return keys.map((k) => out[k] || []);
 }
 
 async function readRangeOrEmpty(range, opts) {
@@ -541,6 +584,33 @@ function statusFields(check) {
 const AVISOS_HEADER = ['id', 'tipo', 'ciclo', 'criadoEm', 'enviadoEm', 'payload'];
 const MULTAS_HEADER = ['ciclo', 'morador', 'valor', 'motivo', 'lancadoEm', 'status', 'obs'];
 const ADMIN_MORADOR = 'GUILHERME';
+const PINS_SHEET = 'PinsMoradores';
+
+function parsePins(rows = []) {
+  const out = {};
+  rows.forEach((r, i) => {
+    if (i === 0 && norm(r[0]) === 'MORADOR') return;
+    const nome = feedLib.canonicalResident(getCell(r, 0));
+    const hash = getCell(r, 1);
+    if (nome && hash) out[nome] = { hash, row: i + 1 };
+  });
+  return out;
+}
+const moradorPinHash = (nome, pin) => crypto.createHash('sha256').update(`mpin:${appSecret()}:${nome}:${String(pin).trim()}`).digest('hex');
+function moradorToken(nome) {
+  const exp = Date.now() + 180 * 24 * 60 * 60 * 1000;
+  const body = `${nome}.${exp}`;
+  return b64u(`${body}.${hmac(`mor|${body}`)}`);
+}
+function moradorTokenValido(nome, token) {
+  const [who, exp, sig] = unb64u(token).split('.');
+  return who === nome && Number(exp) > Date.now() && !!sig && safeEqual(sig, hmac(`mor|${who}.${exp}`));
+}
+/** Se o morador criou PIN, a ação precisa do token dele (impede alguém de se passar por outro no app). */
+function requireMorador(ctx, nome, token) {
+  if (!ctx.pins[nome]) return;
+  if (!moradorTokenValido(nome, token)) throw httpError(401, `Digite o PIN de ${nome.charAt(0)}${nome.slice(1).toLowerCase()} para continuar.`, { code: 'MORADOR_PIN', morador: nome });
+}
 
 /* ---------- segredo, tokens e PIN ---------- */
 
@@ -628,26 +698,68 @@ function feedItemCycle(item) {
   return ciclo.isCycleKey(item.week) ? item.week : feedLib.itemWeekBySp(item);
 }
 
+/** Avaliador gravado cifrado na planilha (quem abre a aba não vê quem deu a nota). */
+const raterCache = new Map();
+function raterId(actor, key) {
+  const k = `${actor}|${key}`;
+  if (!raterCache.has(k)) raterCache.set(k, `#${hmac(`rater|${k}`).slice(0, 12)}`);
+  return raterCache.get(k);
+}
+function decodeRatingRows(rows) {
+  return rows.map((r) => {
+    const who = String(r[1] || '');
+    if (!who.startsWith('#')) return r;
+    const key = String(r[0] || '');
+    const nome = RESIDENTS.find((n) => raterId(n, key) === who);
+    return nome ? [r[0], nome, ...r.slice(2)] : r;
+  });
+}
+
+const CTX_TTL_MS = 3000;
+let ctxMemo = null;
 async function avaliacaoContext({ fresh = false } = {}) {
+  // Vários aparelhos pedindo ao mesmo tempo dividem a mesma leitura.
+  if (!fresh && ctxMemo && ctxMemo.at > Date.now() - CTX_TTL_MS && ctxMemo.v === versionStamp()) return ctxMemo.promise;
+  const promise = loadAvaliacaoContext({ fresh });
+  ctxMemo = { at: Date.now(), v: versionStamp(), promise };
+  promise.catch(() => {
+    ctxMemo = null;
+  });
+  return promise;
+}
+function versionStamp() {
+  return `${versions.feed}.${versions.ratings}.${versions.avaliacao}.${versions.config}.${versions.caixinha}`;
+}
+
+async function loadAvaliacaoContext({ fresh = false } = {}) {
   const config = await readConfig();
   const rules = ciclo.rulesFromConfig(config);
   const inicio = ciclo.isCycleKey(config.avaliacaoInicio) ? config.avaliacaoInicio : '2026-W46';
   const titles = await getSpreadsheetTitles();
-  const read = async (sheet, range) => (titles.includes(sheet) ? readRangeOrEmpty(`${sheet}!${range}`, { fresh }) : []);
-  const [feed, ratingRows, ciclosRows, desempenhoRows, avisosRows, ajustesRows] = await Promise.all([
-    readFeed({ fresh }),
-    read(RATINGS_SHEET, 'A:H'),
-    read(CICLOS_ESCALA_SHEET, 'A:E'),
-    read(DESEMPENHO_SHEET, 'A:L'),
-    read(AVISOS_SHEET, 'A:F'),
-    read(AJUSTES_SHEET, 'A:I'),
-  ]);
+  const want = [
+    [TASK_FEED_SHEET, 'A:H'],
+    [RATINGS_SHEET, 'A:H'],
+    [CICLOS_ESCALA_SHEET, 'A:E'],
+    [DESEMPENHO_SHEET, 'A:L'],
+    [AVISOS_SHEET, 'A:F'],
+    [AJUSTES_SHEET, 'A:I'],
+    [PINS_SHEET, 'A:C'],
+  ];
+  const present = want.filter(([t]) => titles.includes(t));
+  const got = await readRangesBatch(present.map(([t, r]) => `${t}!${r}`), { fresh });
+  const byTab = {};
+  present.forEach(([t], i) => {
+    byTab[t] = got[i];
+  });
+  const [feedRows, ratingRows, ciclosRows, desempenhoRows, avisosRows, ajustesRows, pinRows] = want.map(([t]) => byTab[t] || []);
+  const feed = feedLib.parseFeedRows(feedRows);
   return {
     config,
     rules,
     inicio,
     feed,
-    ratingRows: ratingRows.slice(1),
+    pins: parsePins(pinRows),
+    ratingRows: decodeRatingRows(ratingRows.slice(1)),
     ciclosEscala: ciclo.parseCiclosEscala(ciclosRows),
     desempenho: ciclo.parseDesempenhoRows(desempenhoRows),
     avisos: avisosRows.slice(1).map((r) => ({ id: getCell(r, 0), tipo: getCell(r, 1), ciclo: getCell(r, 2) })),
@@ -691,12 +803,12 @@ async function cycleState(ctx, key, now = Date.now()) {
   return state;
 }
 
-function publicCycle(state, { usuario = '', revelarNotas = false, results = null } = {}) {
+function publicCycle(state, { usuario = '', revelarNotas = false, results = null, rules } = {}) {
   if (!state) return null;
   const me = norm(usuario);
   const { _rows, _expected, ...rest } = state;
   const out = { ...rest, residents: state.residents.map((r) => ({ ...r })) };
-  if (state.phase !== 'entregas') out.notasAoVivo = ciclo.notasAoVivo(state);
+  if (state.phase !== 'entregas') out.notasAoVivo = ciclo.notasAoVivo(state, rules);
   if (me) out.ratedByMe = ciclo.ratedMap(_rows, usuario);
   if (revelarNotas && results) {
     out.resultados = results.map((r) => ({ ...r, comentarios: norm(r.nome) === me ? r.comentarios : undefined }));
@@ -705,6 +817,33 @@ function publicCycle(state, { usuario = '', revelarNotas = false, results = null
 }
 
 let lastProcessAt = 0;
+let lastProcessError = '';
+let lastProcessOkAt = '';
+
+async function diagnostico(ctx) {
+  const titles = await getSpreadsheetTitles({ fresh: true });
+  const abas = [TASK_FEED_SHEET, RATINGS_SHEET, CICLOS_ESCALA_SHEET, ESCALA_APP_SHEET, DESEMPENHO_SHEET, MULTAS_SHEET, AVISOS_SHEET, AJUSTES_SHEET, CONFIG_SHEET, 'Caixinha'];
+  let apps = {};
+  try {
+    apps = JSON.parse(ctx.config.statusAppsScript || '{}');
+  } catch {
+    apps = {};
+  }
+  const ultimoTick = Date.parse(apps.ultimoTick || '');
+  const avisosPendentes = (await readRangeOrEmpty(`${AVISOS_SHEET}!A:E`)).slice(1).filter((r) => getCell(r, 0) && !getCell(r, 4)).length;
+  const itens = [
+    { id: 'planilha', ok: true, texto: 'Planilha conectada' },
+    { id: 'abas', ok: abas.filter((a) => !titles.includes(a)).length <= 4, texto: `Abas faltando: ${abas.filter((a) => !titles.includes(a)).join(', ') || 'nenhuma'} (as novas são criadas sozinhas no primeiro uso)` },
+    { id: 'escala', ok: titles.includes(ESCALA_APP_SHEET), texto: titles.includes(ESCALA_APP_SHEET) ? 'Escala do Apps Script chegando (aba EscalaApp)' : 'Aba EscalaApp não existe: rode o Apps Script novo' },
+    { id: 'apps', ok: Number.isFinite(ultimoTick) && Date.now() - ultimoTick < 3 * 60 * 60 * 1000, texto: Number.isFinite(ultimoTick) ? `Apps Script rodou ${quandoBR(apps.ultimoTick)}${apps.emailsRestantes !== undefined ? ` · cota de e-mail hoje: ${apps.emailsRestantes}` : ''}` : 'Apps Script ainda não deu sinal (ligue os avisos no menu da planilha)' },
+    { id: 'avisos', ok: avisosPendentes <= 2, texto: `${avisosPendentes} aviso(s) de e-mail esperando o Apps Script` },
+    { id: 'processo', ok: !lastProcessError, texto: lastProcessError ? `Último erro ao processar prazos: ${lastProcessError}` : `Prazos processados ${lastProcessOkAt ? quandoBR(lastProcessOkAt) : 'ao abrir o app'}` },
+    { id: 'pin', ok: !!ADMIN_PIN, texto: ADMIN_PIN ? 'PIN do admin protegido no Render' : 'Recomendado: crie ADMIN_PIN no Render (o PIN atual fica na planilha)' },
+    { id: 'pins', ok: RESIDENTS.every((n) => ctx.pins[n]), texto: `PIN criado: ${RESIDENTS.filter((n) => ctx.pins[n]).map((n) => nomeCurto(n)).join(', ') || 'ninguém ainda'}` },
+  ];
+  if (apps.erro) itens.push({ id: 'apps_erro', ok: false, texto: `Apps Script avisou: ${apps.erro}` });
+  return itens;
+}
 let processing = null;
 
 /** Abre/fecha avaliações, grava desempenho, lança multas e cria avisos de e-mail. Idempotente. */
@@ -751,12 +890,18 @@ async function processarCiclos({ force = false } = {}) {
       const results = ciclo.cycleResults(state, ctx.rules);
       const fechadoEm = new Date().toISOString();
       await ensureSheetExists(DESEMPENHO_SHEET, ciclo.DESEMPENHO_HEADER);
-      await appendRows(`${DESEMPENHO_SHEET}!A:L`, results.map((r) => ciclo.resultToRow(r, fechadoEm)));
+      await appendRows(`${DESEMPENHO_SHEET}!A:L`, results.map((r) => ciclo.resultToRow(r.multaPendente ? { ...r, motivo: `pendente: ${r.motivoPendente}` } : r, fechadoEm)));
       const multas = results.filter((r) => r.multa > 0);
-      if (multas.length) {
+      const pendentes = results.filter((r) => r.multaPendente > 0);
+      if (multas.length || pendentes.length) {
         await ensureSheetExists(MULTAS_SHEET, MULTAS_HEADER);
-        await appendRows(`${MULTAS_SHEET}!A:G`, multas.map((r) => [key, r.nome, r.multa, r.motivo, fechadoEm, 'LANÇADA', '']));
-        await appendRows('Caixinha!A:D', multas.map((r) => [spDateBr(), `Multa tarefa · ${r.nome} · semana ${state.periodo}`, r.multa, `automática • ${r.motivo}`]));
+        await appendRows(`${MULTAS_SHEET}!A:G`, [
+          ...multas.map((r) => [key, r.nome, r.multa, r.motivo, fechadoEm, 'LANÇADA', 'automática']),
+          ...pendentes.map((r) => [key, r.nome, r.multaPendente, r.motivoPendente, fechadoEm, 'PENDENTE', 'aguardando o admin']),
+        ]);
+      }
+      if (multas.length) {
+        await appendRows('Caixinha!A:D', multas.map((r) => [spDateBr(), `Multa tarefa · ${r.nome} · semana ${state.periodo}`, r.multa, `automática • ${r.motivo} • a receber`]));
         bump('caixinha');
       }
       await ensureSheetExists(TASK_FEED_SHEET);
@@ -780,10 +925,17 @@ async function processarCiclos({ force = false } = {}) {
       ctx.avisos.push(...events.map((e) => ({ id: `${e.tipo}:${e.ciclo}`, tipo: e.tipo, ciclo: e.ciclo })));
       bump('avaliacao');
     }
+    lastProcessError = '';
+    lastProcessOkAt = new Date().toISOString();
     return { ok: true, events: events.map((e) => `${e.tipo}:${e.ciclo}`) };
-  }).finally(() => {
-    processing = null;
-  });
+  })
+    .catch((e) => {
+      lastProcessError = String(e?.message || e).slice(0, 200);
+      throw e;
+    })
+    .finally(() => {
+      processing = null;
+    });
   return processing;
 }
 
@@ -797,6 +949,7 @@ async function registrarAvaliacao(body, { origem = 'app' } = {}) {
   if (!actor || !target || !Number.isInteger(score) || score < 1 || score > 5) throw httpError(400, 'Dados de avaliação inválidos.');
   if (actor === target) throw httpError(400, 'Não dá para avaliar a própria tarefa.');
   const ctx = await avaliacaoContext({ fresh: true });
+  if (origem === 'app') requireMorador(ctx, actor, body.moradorToken);
   const key = ciclo.isCycleKey(body.ciclo) ? body.ciclo : '';
   if (!key) throw httpError(400, 'Semana inválida.');
   const state = await cycleState(ctx, key);
@@ -810,7 +963,7 @@ async function registrarAvaliacao(body, { origem = 'app' } = {}) {
   const ts = new Date().toISOString();
   const tarefa = categoria === 'banheirao' ? 'Banheirão' : alvo.tarefa;
   await ensureSheetExists(RATINGS_SHEET, ['week', 'actor', 'target', 'nota', 'tarefa', 'comentario', 'ts', 'categoria']);
-  await appendRow(`${RATINGS_SHEET}!A:H`, [key, actor, target, score, tarefa, comentario, ts, categoria]);
+  await appendRow(`${RATINGS_SHEET}!A:H`, [key, raterId(actor, key), target, score, tarefa, comentario, ts, categoria]);
   bump('ratings', 'avaliacao');
   lastProcessAt = 0;
   setTimeout(() => processarCiclos().catch(() => {}), 50);
@@ -831,7 +984,7 @@ async function avaliacaoSnapshot(usuario = '') {
   let ultimoResultado = null;
   if (ultimoFechadoKey) {
     const st = await cycleState(ctx, ultimoFechadoKey, now);
-    ultimoResultado = publicCycle(st, { usuario, revelarNotas: true, results: ciclo.cycleResults(st, ctx.rules) });
+    ultimoResultado = publicCycle(st, { usuario, revelarNotas: true, results: ciclo.cycleResults(st, ctx.rules), rules: ctx.rules });
     // multas e médias oficiais = as gravadas no fechamento
     const gravados = ctx.desempenho.filter((r) => r.ciclo === ultimoFechadoKey);
     ultimoResultado.resultados = ultimoResultado.resultados.map((r) => {
@@ -858,14 +1011,16 @@ async function avaliacaoSnapshot(usuario = '') {
     inicio: ctx.inicio,
     regras: {
       multaAuto: ctx.rules.multaAuto,
+      multaMediaAuto: ctx.rules.multaMediaAuto,
       multaValor: ctx.rules.multaValor,
       mediaMinima: ctx.rules.mediaMinima,
       minAvaliacoes: ctx.rules.minAvaliacoes,
       toleranciaDias: ctx.rules.toleranciaDias - 6,
       banheiraoGrupo: ctx.rules.banheiraoGrupo,
     },
-    atual: publicCycle(atual, { usuario }),
-    anterior: publicCycle(anterior, { usuario }),
+    atual: publicCycle(atual, { usuario, rules: ctx.rules }),
+    anterior: publicCycle(anterior, { usuario, rules: ctx.rules }),
+    meuPin: usuario ? !!ctx.pins[feedLib.canonicalResident(usuario)] : false,
     emAvaliacao: emAvaliacao ? emAvaliacao.key : '',
     minhaEntrega,
     ultimoResultado,
@@ -961,7 +1116,7 @@ const getActions = {
       if (key < ctx.inicio && key !== atualKey) continue;
       const st = await cycleState(ctx, key, now);
       const { _rows, _expected, ...rest } = st;
-      semanas.push({ ...rest, futura: key > atualKey, notasAoVivo: st.phase !== 'entregas' ? ciclo.notasAoVivo(st) : null });
+      semanas.push({ ...rest, futura: key > atualKey, notasAoVivo: st.phase !== 'entregas' ? ciclo.notasAoVivo(st, ctx.rules) : null });
     }
     const titles = await getSpreadsheetTitles();
     const multasRows = titles.includes(MULTAS_SHEET) ? (await readRangeOrEmpty(`${MULTAS_SHEET}!A:G`, { fresh: true })).slice(1) : [];
@@ -978,6 +1133,7 @@ const getActions = {
       regras: {
         avaliacaoInicio: ctx.inicio,
         avaliacaoMultaAuto: ctx.rules.multaAuto,
+        avaliacaoMultaMediaAuto: ctx.rules.multaMediaAuto,
         avaliacaoMultaValor: ctx.rules.multaValor,
         avaliacaoMediaMinima: ctx.rules.mediaMinima,
         avaliacaoMinAvaliacoes: ctx.rules.minAvaliacoes,
@@ -985,6 +1141,8 @@ const getActions = {
         banheiraoGrupo: ctx.rules.banheiraoGrupo.join(','),
       },
       log: logRows.slice(-40).reverse().map((r) => ({ quando: getCell(r, 0), acao: getCell(r, 1), detalhe: getCell(r, 3) })),
+      pins: Object.fromEntries(RESIDENTS.map((n) => [n, !!ctx.pins[n]])),
+      diagnostico: await diagnostico(ctx),
       links: Object.fromEntries(RESIDENTS.map((n) => [n, linkAvaliacao(n, keys.find((k) => semanas.some((x) => x.key === k && x.phase === 'avaliacao')) || atualKey)])),
     };
   },
@@ -1174,6 +1332,7 @@ const postActions = {
     if (!photoDataUrl) throw httpError(400, 'A foto da tarefa é obrigatória.');
     if (fotos.some((f) => !/^data:image\//i.test(f))) throw httpError(400, 'Formato de foto inválido.');
     const ctx = await avaliacaoContext({ fresh: true });
+    requireMorador(ctx, usuario, body.moradorToken);
     const now = Date.now();
     const atualKey = ciclo.currentCycleKey(new Date(now));
     const key = ciclo.isCycleKey(body.ciclo) ? body.ciclo : atualKey;
@@ -1207,6 +1366,79 @@ const postActions = {
     return registrarAvaliacao(body);
   },
 
+  /** PIN do morador: cria (1ª vez) ou troca. Protege entrega e avaliação no app e no link do e-mail. */
+  async moradorDefinirPin(body) {
+    const nome = feedLib.canonicalResident(body.usuario);
+    const pin = String(body.pin || '').trim();
+    if (!nome) throw httpError(400, 'Morador inválido.');
+    if (!/^\d{4,8}$/.test(pin)) throw httpError(400, 'Use um PIN de 4 a 8 números.');
+    const ctx = await avaliacaoContext({ fresh: true });
+    const atual = ctx.pins[nome];
+    if (atual && !safeEqual(moradorPinHash(nome, body.pinAtual || ''), atual.hash)) throw httpError(403, 'PIN atual errado.', { code: 'BAD_PIN' });
+    await ensureSheetExists(PINS_SHEET, ['morador', 'hash', 'atualizadoEm']);
+    const linha = [nome, moradorPinHash(nome, pin), new Date().toISOString()];
+    if (atual) await writeCells(PINS_SHEET, linha.map((value, col) => ({ row: atual.row, col, value })));
+    else await appendRow(`${PINS_SHEET}!A:C`, linha);
+    bump('avaliacao');
+    return { ok: true, moradorToken: moradorToken(nome), message: atual ? 'PIN trocado.' : 'PIN criado.' };
+  },
+
+  async moradorEntrar(body) {
+    const nome = feedLib.canonicalResident(body.usuario);
+    const ctx = await avaliacaoContext({ fresh: true });
+    const atual = nome && ctx.pins[nome];
+    if (!atual) throw httpError(404, 'Esse morador ainda não criou PIN.', { code: 'NO_PIN' });
+    if (!safeEqual(moradorPinHash(nome, body.pin || ''), atual.hash)) {
+      await new Promise((r) => setTimeout(r, 800));
+      throw httpError(403, 'PIN errado.', { code: 'BAD_PIN' });
+    }
+    return { ok: true, moradorToken: moradorToken(nome) };
+  },
+
+  async adminResetarPinMorador(body) {
+    await requireAdmin(body);
+    const nome = feedLib.canonicalResident(body.morador);
+    const ctx = await avaliacaoContext({ fresh: true });
+    const atual = nome && ctx.pins[nome];
+    if (!atual) throw httpError(404, 'Esse morador não tem PIN.');
+    await writeCells(PINS_SHEET, [{ row: atual.row, col: 1, value: '' }]);
+    await adminLog('resetar PIN', nome);
+    bump('avaliacao');
+    return { ok: true, message: `PIN de ${nome} apagado. No próximo uso ele cria outro.` };
+  },
+
+  /** Multa por média baixa fica pendente até o admin decidir (evita notas combinadas). */
+  async adminDecidirMulta(body) {
+    await requireAdmin(body);
+    const key = String(body.ciclo || '');
+    const nome = feedLib.canonicalResident(body.morador);
+    const confirmar = body.decisao === 'confirmar';
+    const rows = await readRangeOrEmpty(`${MULTAS_SHEET}!A:G`, { fresh: true });
+    const idx = rows.findIndex((r, i) => i > 0 && getCell(r, 0) === key && norm(getCell(r, 1)) === norm(nome) && norm(getCell(r, 5)) === 'PENDENTE');
+    if (idx < 0) throw httpError(404, 'Multa pendente não encontrada.');
+    const valor = toNumberLike(getCell(rows[idx], 2)) || 0;
+    const motivoRegra = getCell(rows[idx], 3);
+    const obs = String(body.motivo || '').trim().slice(0, 200);
+    await writeCells(MULTAS_SHEET, [
+      { row: idx + 1, col: 5, value: confirmar ? 'LANÇADA' : 'DESCARTADA' },
+      { row: idx + 1, col: 6, value: `${confirmar ? 'confirmada' : 'descartada'} por ${ADMIN_MORADOR}${obs ? ` • ${obs}` : ''}` },
+    ]);
+    const des = await readRangeOrEmpty(`${DESEMPENHO_SHEET}!A:L`, { fresh: true });
+    const dIdx = des.findIndex((r) => getCell(r, 0) === key && norm(getCell(r, 1)) === norm(nome));
+    if (confirmar) {
+      await appendRow('Caixinha!A:D', [spDateBr(), `Multa tarefa · ${nome} · semana ${ciclo.cycleInfo(key).periodo}`, valor, `confirmada pelo admin • ${motivoRegra} • a receber`]);
+      if (dIdx >= 0) await writeCells(DESEMPENHO_SHEET, [{ row: dIdx + 1, col: 9, value: String(valor) }, { row: dIdx + 1, col: 10, value: motivoRegra }]);
+      await ensureSheetExists(AVISOS_SHEET, AVISOS_HEADER);
+      await appendRow(`${AVISOS_SHEET}!A:F`, [`multa_confirmada:${key}:${nome}`, 'multa_confirmada', key, new Date().toISOString(), '', JSON.stringify({ periodo: ciclo.cycleInfo(key).periodo, resultados: [{ nome, multa: valor, motivo: motivoRegra }] })]);
+      bump('caixinha');
+    } else if (dIdx >= 0) {
+      await writeCells(DESEMPENHO_SHEET, [{ row: dIdx + 1, col: 10, value: `multa descartada pelo admin${obs ? `: ${obs}` : ''}` }]);
+    }
+    await adminLog(confirmar ? 'confirmar multa' : 'descartar multa', `${key} · ${nome} · R$ ${valor}${obs ? ` · ${obs}` : ''}`);
+    bump('avaliacao');
+    return { ok: true, message: confirmar ? `Multa de R$ ${valor} lançada na Caixinha.` : 'Multa descartada.' };
+  },
+
   /** Cria (primeira vez) ou troca o PIN da administração. */
   async adminDefinirPin(body) {
     if (feedLib.canonicalResident(body.usuario) !== ADMIN_MORADOR) throw httpError(403, 'Só o Guilherme administra.');
@@ -1215,6 +1447,14 @@ const postActions = {
     if (!/^\d{4,8}$/.test(novo)) throw httpError(400, 'Use um PIN de 4 a 8 números.');
     const config = await readConfig();
     if (config.adminPinHash && !safeEqual(pinHash(body.pinAtual || ''), config.adminPinHash)) throw httpError(403, 'PIN atual errado.', { code: 'BAD_PIN' });
+    if (!config.adminPinHash) {
+      // Se já existiu PIN e alguém apagou a linha da planilha, não deixa criar outro por aqui.
+      const titles = await getSpreadsheetTitles();
+      const logs = titles.includes(ADMIN_LOG_SHEET) ? await readRangeOrEmpty(`${ADMIN_LOG_SHEET}!A:D`, { fresh: true }) : [];
+      if (logs.some((r) => /definir PIN/i.test(getCell(r, 1)))) {
+        throw httpError(403, 'O PIN do admin sumiu da planilha. Por segurança, defina ADMIN_PIN no Render para entrar.', { code: 'PIN_REMOVIDO' });
+      }
+    }
     await setConfigValues({ adminPinHash: pinHash(novo) });
     await adminLog('definir PIN', config.adminPinHash ? 'PIN trocado' : 'PIN criado');
     return { ok: true, adminToken: adminToken() };
@@ -1302,8 +1542,8 @@ const postActions = {
     const nome = feedLib.canonicalResident(body.morador);
     const motivo = String(body.motivo || '').trim().slice(0, 200) || 'retirada pelo admin';
     const rows = await readRangeOrEmpty(`${MULTAS_SHEET}!A:G`, { fresh: true });
-    const idx = rows.findIndex((r, i) => i > 0 && getCell(r, 0) === key && norm(getCell(r, 1)) === norm(nome) && norm(getCell(r, 5) || 'LANCADA') !== 'RETIRADA');
-    if (idx < 0) throw httpError(404, 'Multa não encontrada (ou já retirada).');
+    const idx = rows.findIndex((r, i) => i > 0 && getCell(r, 0) === key && norm(getCell(r, 1)) === norm(nome) && norm(getCell(r, 5) || 'LANCADA') === 'LANCADA');
+    if (idx < 0) throw httpError(404, 'Multa lançada não encontrada (ou já retirada).');
     const valor = toNumberLike(getCell(rows[idx], 2)) || 0;
     await writeCells(MULTAS_SHEET, [
       { row: idx + 1, col: 5, value: 'RETIRADA' },
@@ -1345,6 +1585,7 @@ const postActions = {
     const r = body.regras || {};
     const out = {};
     if (r.avaliacaoMultaAuto !== undefined) out.avaliacaoMultaAuto = r.avaliacaoMultaAuto ? 'sim' : 'não';
+    if (r.avaliacaoMultaMediaAuto !== undefined) out.avaliacaoMultaMediaAuto = r.avaliacaoMultaMediaAuto ? 'sim' : 'não';
     if (r.avaliacaoMultaValor !== undefined) {
       const v = toNumberLike(r.avaliacaoMultaValor);
       if (!Number.isFinite(v) || v < 0) throw httpError(400, 'Valor da multa inválido.');
@@ -1999,9 +2240,9 @@ function paginaAvaliacao({ token, actor, state, rules, msg = '', erro = '', alvo
   const fmtNota = (v) => (v === null || v === undefined ? '—' : Number(v).toFixed(1).replace('.', ','));
   const aoVivo = state.phase === 'entregas' ? '' : `<section class="card"><div class="ov">Notas ao vivo</div>
     <div class="muted small" style="margin:2px 0 8px">Média das notas recebidas até agora (anônimas). Atualiza sozinho.</div>
-    ${ciclo.notasAoVivo(state).map((n) => `<div class="row live"><div class="av sm">${esc(n.nome.charAt(0))}</div><div class="grow"><b>${esc(nomeCurto(n.nome))}</b>
+    ${ciclo.notasAoVivo(state, rules).map((n) => `<div class="row live"><div class="av sm">${esc(n.nome.charAt(0))}</div><div class="grow"><b>${esc(nomeCurto(n.nome))}</b>
       <div class="muted small" style="margin:0">${n.status === 'entregue' ? `${n.notas} de ${n.esperadas} notas${n.esperadasBanheirao ? ` · banheirão ${fmtNota(n.mediaBanheirao)} (${n.notasBanheirao}/${n.esperadasBanheirao})` : ''}` : n.status === 'dispensado' ? 'dispensado' : 'não entregou'}</div>
-      <div class="mini"><div style="width:${n.media ? Math.round((n.media / 5) * 100) : 0}%"></div></div></div><div class="nota">★ ${fmtNota(n.media)}</div></div>`).join('')}</section>`;
+      <div class="mini"><div style="width:${n.media ? Math.round((n.media / 5) * 100) : 0}%"></div></div></div><div class="nota">${n.aguardando ? '<span class="muted small">aguardando mais notas</span>' : `★ ${fmtNota(n.media)}`}</div></div>`).join('')}</section>`;
   const titulo = state.phase === 'encerrada' ? 'Avaliação encerrada' : state.phase === 'entregas' ? 'Avaliação ainda não abriu' : prog.feitas >= prog.total ? 'Você avaliou todo mundo 🎉' : `Faltam ${prog.total - prog.feitas} de ${prog.total} notas`;
   return `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex">
 <title>Avaliação da semana · Tocah</title><style>
@@ -2045,7 +2286,7 @@ ${faltaram.length ? `<section class="card"><div class="ov">Sem avaliação</div>
 <script>
 (function(){var t=${JSON.stringify(token)},last=null;
 function tick(){if(document.activeElement&&/TEXTAREA|INPUT/.test(document.activeElement.tagName))return;
-fetch('/avaliar/estado?t='+encodeURIComponent(t)).then(function(r){return r.json()}).then(function(j){var k=j.phase+'|'+j.feitas+'|'+j.total+'|'+j.geral;if(last&&k!==last)location.replace(location.pathname+'?t='+encodeURIComponent(t));last=k;}).catch(function(){});}
+fetch('/avaliar/estado?t='+encodeURIComponent(t)).then(function(r){return r.json()}).then(function(j){var k=j.v;if(last&&k!==last)location.replace(location.pathname+'?t='+encodeURIComponent(t));last=k;}).catch(function(){});}
 tick();setInterval(tick,10000);
 var a=document.querySelector('.card.destaque');if(a)a.scrollIntoView({block:'center'});})();
 </script></body></html>`;
@@ -2056,7 +2297,30 @@ async function carregarParaPagina(token) {
   if (!tk) throw httpError(403, 'Link inválido ou incompleto. Abra pelo e-mail mais recente ou pelo app.');
   const ctx = await avaliacaoContext({ fresh: true });
   const state = await cycleState(ctx, tk.ciclo);
-  return { ...tk, state, rules: ctx.rules };
+  return { ...tk, state, rules: ctx.rules, temPin: !!ctx.pins[tk.actor] };
+}
+
+function cookies(req) {
+  const out = {};
+  String(req.headers?.cookie || '').split(';').forEach((p) => {
+    const i = p.indexOf('=');
+    if (i > 0) out[p.slice(0, i).trim()] = decodeURIComponent(p.slice(i + 1).trim());
+  });
+  return out;
+}
+const pinCookieOk = (req, actor) => moradorTokenValido(actor, cookies(req)[`tm_${actor}`]);
+
+function paginaPin(token, actor, erro = '') {
+  return `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>PIN · Tocah</title></head>
+<body style="margin:0;background:#F6F4FA;font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;font-weight:600;color:#1C1A26"><div style="max-width:420px;margin:40px auto;padding:0 16px">
+<div style="border-radius:26px;padding:22px;color:#fff;background:linear-gradient(135deg,#6A1B9A,#4A148C)"><div style="font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;opacity:.8">Avaliação da semana</div>
+<div style="font-size:21px;font-weight:900;margin-top:4px">Oi, ${esc(nomeCurto(actor))}! Digite seu PIN</div><div style="font-size:14px;margin-top:6px;opacity:.9">É o mesmo PIN do app. Assim ninguém avalia no seu lugar se o e-mail for encaminhado.</div></div>
+${erro ? `<div style="margin-top:12px;padding:12px 14px;border-radius:16px;background:#FBE6E8;color:#951E28">${esc(erro)}</div>` : ''}
+<form method="post" action="/avaliar/pin" style="margin-top:14px;background:#fff;border:1px solid #E7E2EF;border-radius:22px;padding:16px">
+<input type="hidden" name="t" value="${esc(token)}">
+<input name="pin" inputmode="numeric" pattern="[0-9]*" maxlength="8" autocomplete="one-time-code" placeholder="PIN" autofocus required style="width:100%;box-sizing:border-box;font-size:22px;letter-spacing:.3em;text-align:center;padding:14px;border-radius:14px;border:1px solid #E7E2EF;background:#F3EFF8">
+<button style="width:100%;margin-top:12px;min-height:48px;border:0;border-radius:16px;background:#6A1B9A;color:#fff;font-size:15px;font-weight:900">Entrar</button>
+<div style="margin-top:10px;font-size:12px;color:#8F8AA3;text-align:center">Esqueceu? O Guilherme apaga o PIN na Administração e você cria outro no app.</div></form></div></body></html>`;
 }
 
 function paginaErro(res, status, texto) {
@@ -2071,6 +2335,9 @@ app.get('/avaliar', async (req, res) => {
   rememberBase(req);
   try {
     const d = await carregarParaPagina(String(req.query.t || ''));
+    if (d.temPin && !pinCookieOk(req, d.actor)) {
+      return res.set('Cache-Control', 'no-store').set('Content-Type', 'text/html; charset=utf-8').send(paginaPin(String(req.query.t), d.actor, String(req.query.erroPin || '')));
+    }
     const alvoSel = feedLib.canonicalResident(req.query.alvo) || '';
     const notaSel = Math.max(0, Math.min(5, Number(req.query.nota) || 0));
     res.set('Cache-Control', 'no-store').set('Content-Type', 'text/html; charset=utf-8');
@@ -2080,10 +2347,34 @@ app.get('/avaliar', async (req, res) => {
   }
 });
 
+app.post('/avaliar/pin', async (req, res) => {
+  const token = String(req.body?.t || '');
+  const tk = readAvaliacaoToken(token);
+  if (!tk) return paginaErro(res, 403, 'Link inválido.');
+  try {
+    const ctx = await avaliacaoContext({ fresh: true });
+    const atual = ctx.pins[tk.actor];
+    if (!atual || !safeEqual(moradorPinHash(tk.actor, req.body?.pin || ''), atual.hash)) {
+      await new Promise((r) => setTimeout(r, 800));
+      return res.redirect(303, `/avaliar?t=${encodeURIComponent(token)}&erroPin=${encodeURIComponent('PIN errado. Tenta de novo.')}`);
+    }
+    res.set('Set-Cookie', `tm_${tk.actor}=${encodeURIComponent(moradorToken(tk.actor))}; Path=/avaliar; Max-Age=15552000; HttpOnly; Secure; SameSite=Lax`);
+    return res.redirect(303, `/avaliar?t=${encodeURIComponent(token)}`);
+  } catch (error) {
+    return paginaErro(res, error.status || 500, error.message || 'Não deu para conferir o PIN.');
+  }
+});
+
 app.post('/avaliar', async (req, res) => {
   const token = String(req.body?.t || '');
   const tk = readAvaliacaoToken(token);
   if (!tk) return paginaErro(res, 403, 'Link inválido.');
+  try {
+    const ctx = await avaliacaoContext();
+    if (ctx.pins[tk.actor] && !pinCookieOk(req, tk.actor)) return res.redirect(303, `/avaliar?t=${encodeURIComponent(token)}`);
+  } catch {
+    /* segue: registrarAvaliacao valida de novo */
+  }
   const alvo = feedLib.canonicalResident(req.body?.alvo);
   const back = (q) => res.redirect(303, `/avaliar?t=${encodeURIComponent(token)}&${q}#${alvo || ''}`);
   try {
@@ -2102,14 +2393,10 @@ app.post('/avaliar', async (req, res) => {
   }
 });
 
-app.get('/avaliar/estado', async (req, res) => {
-  try {
-    const d = await carregarParaPagina(String(req.query.t || ''));
-    const prog = d.state.avaliacoes.porAvaliador[d.actor] || { total: 0, feitas: 0 };
-    res.set('Cache-Control', 'no-store').json({ ok: true, phase: d.state.phase, ...prog, geral: d.state.avaliacoes.feitas });
-  } catch (error) {
-    sendError(res, error);
-  }
+app.get('/avaliar/estado', (req, res) => {
+  // Só compara versões em memória: não lê a planilha (a página pergunta a cada 10 s).
+  if (!readAvaliacaoToken(String(req.query.t || ''))) return res.status(403).json({ ok: false });
+  return res.set('Cache-Control', 'no-store').json({ ok: true, v: `${versions.ratings}.${versions.avaliacao}.${versions.feed}` });
 });
 
 app.get('/avaliar/foto', async (req, res) => {

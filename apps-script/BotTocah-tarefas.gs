@@ -324,7 +324,7 @@ function executarEnvioSoloBanheirao(isLembrete) {
       })
       .join(', ');
   const assunto = (isLembrete ? '🚨 ' : '🚿 ') + 'Banheirão Tocah — ' + (isLembrete ? 'Lembrete (multa)' : 'Esta semana');
-  MailApp.sendEmail({ to: todosEmails, subject: assunto, htmlBody: htmlBody });
+  enviarEmail_({ to: todosEmails, subject: assunto, htmlBody: htmlBody });
   if (abaWhats) atualizarLinkWhatsBanheirao(banheiraoResp, tarefaBanheirao, isLembrete, abaWhats, dadosAba);
   try {
     SpreadsheetApp.getUi().alert('✅ Email do banheirão enviado para todos!');
@@ -336,7 +336,7 @@ function executarEnvioGeral(isLembrete, silencioso) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const abaWhats = ss.getSheetByName('Envios WhatsApp');
   const dadosAba = abaWhats ? abaWhats.getDataRange().getValues() : [];
-  const atribuicoes = getAtribuicoesSemana();
+  const atribuicoes = atribuicoesComAjustes_(0);
   const banheiraoResp = getBanheiraoSemana();
   const tarefaBanheirao = getTarefaBanheirao();
   const emoji = isLembrete ? '🚨' : '📋';
@@ -344,13 +344,13 @@ function executarEnvioGeral(isLembrete, silencioso) {
   const status = isLembrete ? concluidasNoApp_() : null;
   const htmlBody = montarHtmlEmailUnico(atribuicoes, isLembrete, banheiraoResp, tarefaBanheirao, status);
   const assunto = emoji + (isLembrete ? ' Escala Tocah · fechamento da semana' : ' Escala Tocah · tarefas da semana');
-  const todosEmails = atribuicoes
-      .map(function (a) {
-        return a.morador.email;
+  const todosEmails = getListaMoradores()
+      .map(function (m) {
+        return m.email;
       })
       .join(', ');
 
-  MailApp.sendEmail({ to: todosEmails, subject: assunto, htmlBody: htmlBody });
+  enviarEmail_({ to: todosEmails, subject: assunto, htmlBody: htmlBody });
   registrarLog(isLembrete ? 'Lembrete de multa' : 'Escala da semana', 'Enviado para todos');
 
   atribuicoes.forEach(function (a) {
@@ -403,7 +403,7 @@ function atualizarLinkWhatsBanheirao(morador, tarefa, isLembrete, aba, dadosAba)
 }
 
 function executarEnvioIndividual(isLembrete, nomeEspecifico) {
-  const atribuicoes = getAtribuicoesSemana();
+  const atribuicoes = atribuicoesComAjustes_(0);
   const morador = getListaMoradores().find(function (m) {
     return m.nome === nomeEspecifico;
   });
@@ -413,7 +413,7 @@ function executarEnvioIndividual(isLembrete, nomeEspecifico) {
   }
   const status = isLembrete ? concluidasNoApp_() : null;
   const htmlBody = montarHtmlEmailUnico(atribuicoes, isLembrete, getBanheiraoSemana(), getTarefaBanheirao(), status);
-  MailApp.sendEmail({ to: morador.email, subject: '📋 Escala Tocah · tarefas da semana', htmlBody: htmlBody });
+  enviarEmail_({ to: morador.email, subject: '📋 Escala Tocah · tarefas da semana', htmlBody: htmlBody });
   registrarLog('Escala individual', 'Enviado para ' + nomeEspecifico);
   try { SpreadsheetApp.getUi().alert('✅ E-mail enviado para ' + nomeEspecifico); } catch (e) {}
 }
@@ -480,7 +480,7 @@ function removerEnvioDiario(silencioso) {
 }
 
 function enviarNotificacoesDiarias() {
-  const atribuicoes = getAtribuicoesSemana();
+  const atribuicoes = atribuicoesComAjustes_(0);
   const banheiraoResp = getBanheiraoSemana();
   const tarefaBanheirao = getTarefaBanheirao();
   const feitos = concluidasNoApp_();
@@ -522,7 +522,7 @@ function enviarNotificacoesDiarias() {
     }
     var descExtra = banheiraoResp && a.morador.nome === banheiraoResp.nome ? htmlEmailExtraBanheirao(tarefaBanheirao) : '';
     var htmlBody = montarHtmlLembreteDiario(a.morador.nome, a.tarefa.area, a.tarefa.freq, a.tarefa.desc, descExtra, a.tarefa.prazo);
-    MailApp.sendEmail({ to: a.morador.email, subject: 'Lembrete do dia · Tocah 🐰', htmlBody: htmlBody });
+    enviarEmail_({ to: a.morador.email, subject: 'Lembrete do dia · Tocah 🐰', htmlBody: htmlBody });
     enviados.push(a.morador.nome);
   });
   registrarLog('Lembretes diários', 'Enviados: ' + (enviados.join(', ') || '—') + (pulados.length ? ' · Já feitos no app: ' + pulados.join(', ') : ''));
@@ -1218,7 +1218,8 @@ function inicioSemanaSP_() {
   var agora = new Date();
   var diaSemana = Number(Utilities.formatDate(agora, 'America/Sao_Paulo', 'u')); // 1 = segunda ... 7 = domingo
   var hojeStr = Utilities.formatDate(agora, 'America/Sao_Paulo', 'yyyy-MM-dd');
-  var hoje0 = new Date(hojeStr + 'T00:00:00-03:00');
+  var fuso = Utilities.formatDate(agora, 'America/Sao_Paulo', 'XXX') || '-03:00'; // segue o horário de verão se voltar
+  var hoje0 = new Date(hojeStr + 'T00:00:00' + fuso);
   return new Date(hoje0.getTime() - (diaSemana - 1) * 24 * 60 * 60 * 1000);
 }
 
@@ -1271,7 +1272,7 @@ function lembreteDomingoPendentes() {
     cobrancaTarefasTocah(); // a régua já cobre o domingo (hoje, 18h e 22h)
     return;
   }
-  var atribuicoes = getAtribuicoesSemana();
+  var atribuicoes = atribuicoesComAjustes_(0);
   var feitos = concluidasNoApp_();
   var banheiraoResp = getBanheiraoSemana();
   var tarefaBanheirao = getTarefaBanheirao();
@@ -1283,7 +1284,7 @@ function lembreteDomingoPendentes() {
   pendentes.forEach(function (a) {
     var extra = banheiraoResp && banheiraoResp.nome === a.morador.nome ? htmlEmailExtraBanheirao(tarefaBanheirao) : '';
     var html = montarHtmlLembreteDiario(a.morador.nome, a.tarefa.area, a.tarefa.freq, a.tarefa.desc, extra, a.tarefa.prazo, true);
-    MailApp.sendEmail({ to: a.morador.email, subject: '⏰ Último dia · marque sua tarefa no app Tocah', htmlBody: html });
+    enviarEmail_({ to: a.morador.email, subject: '⏰ Último dia · marque sua tarefa no app Tocah', htmlBody: html });
   });
   registrarLog('Lembrete de domingo', 'Enviado para: ' + pendentes.map(function (a) { return a.morador.nome; }).join(', '));
 }
@@ -1669,10 +1670,15 @@ function arquivarFotosNoDrive_(ciclo, periodo, entregas) {
  * Roda de hora em hora: acorda o app (processa prazos), lê os avisos pendentes e manda os e-mails.
  */
 function tickAvaliacaoTocah() {
+  var hora = Number(Utilities.formatDate(new Date(), 'America/Sao_Paulo', 'H'));
+  // De madrugada não cobra ninguém e deixa o servidor dormir (economiza as horas grátis do Render).
+  if (hora < 7) return;
+  var erroTick = '';
   try {
+    // Também mantém o servidor acordado de dia (o Render grátis dorme após 15 min sem uso).
     UrlFetchApp.fetch(BACKEND_URL + '?action=tickAvaliacao', { muteHttpExceptions: true, followRedirects: true });
   } catch (e) {
-    // servidor dormindo: tenta de novo na próxima hora; os avisos já gravados seguem abaixo
+    erroTick = 'servidor não respondeu (deve estar acordando)';
   }
   var estado = estadoAvaliacaoDoApp_();
   try {
@@ -1688,6 +1694,7 @@ function tickAvaliacaoTocah() {
   try {
     if (Utilities.formatDate(new Date(), 'America/Sao_Paulo', 'u') === '1') limparMarcasAntigas_();
   } catch (e) {}
+  salvarStatusApps_({ erro: estado ? '' : erroTick || 'não deu pra ler o estado do app' });
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var aba = ss.getSheetByName(ABA_AVISOS);
   if (!aba || aba.getLastRow() < 2) return;
@@ -1732,7 +1739,7 @@ function enviarAviso_(aviso) {
         cids[n] = 'tarefa' + n.toLowerCase();
         inline[cids[n]] = blobs[n];
       });
-      MailApp.sendEmail({
+      enviarEmail_({
         to: m.email,
         subject: '⭐ Avaliação da semana aberta · Tocah',
         htmlBody: htmlAvaliacaoAberta_(m.nome, aviso, cids, totais),
@@ -1744,7 +1751,7 @@ function enviarAviso_(aviso) {
       var email = emailDe_(x.nome);
       if (!email) return;
       if (p.tipo === 'avaliacao') {
-        MailApp.sendEmail({ to: email, subject: '📣 O Guilherme pediu: faltam ' + x.faltam + ' notas suas · Tocah', htmlBody: htmlLembreteAvaliacao_(x.nome, x.faltam, { ciclo: aviso.ciclo, payload: { periodo: p.periodo, fechamento: p.fechamento, link: x.link } }) });
+        enviarEmail_({ to: email, subject: '📣 O Guilherme pediu: faltam ' + x.faltam + ' notas suas · Tocah', htmlBody: htmlLembreteAvaliacao_(x.nome, x.faltam, { ciclo: aviso.ciclo, payload: { periodo: p.periodo, fechamento: p.fechamento, link: x.link } }) });
       } else {
         var a = getAtribuicoesSemana(0).filter(function (q) { return normNome_(q.morador.nome) === normNome_(x.nome); })[0] ||
           { morador: { nome: x.nome, email: email }, tarefa: { area: x.tarefa, freq: '', desc: '' } };
@@ -1752,16 +1759,18 @@ function enviarAviso_(aviso) {
         var pz = { prazo: Date.parse(x.prazo), tolerancia: Date.parse(x.tolerancia), lavanderia: false };
         var est = x.status === 'atrasada' ? 'atrasada_manual' : 'prazo_hoje';
         var mail = montarHtmlCobranca_(a, x.status === 'atrasada' ? -1 : 0, est, pz, '');
-        MailApp.sendEmail({ to: email, subject: '📣 Cobrança da casa: ' + mail.assunto, htmlBody: mail.html });
+        enviarEmail_({ to: email, subject: '📣 Cobrança da casa: ' + mail.assunto, htmlBody: mail.html });
       }
     });
   } else if (aviso.tipo === 'lembrete_avaliacao') {
     // coberto pelo lembrete diário das 19h (cobrancaAvaliacaoTocah_)
+  } else if (aviso.tipo === 'multa_confirmada') {
+    avisarMultas_(aviso);
   } else if (aviso.tipo === 'avaliacao_encerrada') {
     avisarMultas_(aviso);
     var link = arquivarFotosNoDrive_(aviso.ciclo, p.periodo || aviso.ciclo, p.resultados || []);
     var todos = getListaMoradores().map(function (m) { return m.email; }).join(', ');
-    MailApp.sendEmail({ to: todos, subject: '🏁 Resultado da avaliação da semana · Tocah', htmlBody: htmlAvaliacaoEncerrada_(aviso, link) });
+    enviarEmail_({ to: todos, subject: '🏁 Resultado da avaliação da semana · Tocah', htmlBody: htmlAvaliacaoEncerrada_(aviso, link) });
   }
 }
 
@@ -1769,10 +1778,10 @@ function instalarGatilhoAvaliacao() {
   ScriptApp.getProjectTriggers().forEach(function (t) {
     if (t.getHandlerFunction() === 'tickAvaliacaoTocah') ScriptApp.deleteTrigger(t);
   });
-  ScriptApp.newTrigger('tickAvaliacaoTocah').timeBased().everyHours(1).create();
+  ScriptApp.newTrigger('tickAvaliacaoTocah').timeBased().everyMinutes(10).create();
   tickAvaliacaoTocah();
   try {
-    SpreadsheetApp.getUi().alert('✅ Avisos ligados: de hora em hora o script cobra quem não entregou (2 dias antes, véspera, dia do prazo 9h/18h/22h, atraso todo dia e quarta 18h/22h antes da multa) e quem não avaliou (todo dia 19h).');
+    SpreadsheetApp.getUi().alert('✅ Avisos ligados: a cada 10 minutos (das 7h à meia-noite) o script cobra quem não entregou (2 dias antes, véspera, dia do prazo 9h/18h/22h, atraso todo dia e o último dia 18h/22h antes da multa) e quem não avaliou (todo dia 19h). Isso também mantém o app acordado de dia.');
   } catch (e) {}
 }
 
@@ -1905,6 +1914,86 @@ function limparMarcasAntigas_() {
 }
 
 /** Situação do morador no app (prazo ajustado pelo admin, dispensa etc.). null se o app não respondeu. */
+/** Ajustes do admin (aba AjustesTarefas) do ciclo: { NOME|*: { tipo: valor } } — o mais recente vale. */
+function ajustesDoCiclo_(offset) {
+  var out = {};
+  try {
+    var aba = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('AjustesTarefas');
+    if (!aba || aba.getLastRow() < 2) return out;
+    var chave = cicloKey_(offset);
+    var linhas = aba.getRange(2, 1, aba.getLastRow() - 1, 9).getValues()
+        .filter(function (l) { return String(l[1]) === chave && normNome_(l[8] || 'SIM') !== 'NAO'; })
+        .sort(function (x, y) { return String(x[7]) < String(y[7]) ? -1 : 1; });
+    linhas.forEach(function (l) {
+      var quem = normNome_(l[2]) || '*';
+      out[quem] = out[quem] || {};
+      out[quem][String(l[3]).toLowerCase()] = String(l[4]);
+    });
+  } catch (e) {}
+  return out;
+}
+
+/** Situação calculada só com a planilha (quando o servidor não responde): prazos ajustados, dispensa, troca. */
+function residenteDaPlanilha_(offset, a) {
+  var aj = ajustesDoCiclo_(offset);
+  var nome = normNome_(a.morador.nome);
+  var meu = aj[nome] || {};
+  var geral = aj['*'] || {};
+  if (meu.dispensa) return { nome: nome, status: 'dispensado' };
+  var tarefa = meu.tarefa || a.tarefa.area;
+  var p = prazosDoCiclo_(offset, tarefa);
+  var prazo = Date.parse(meu.prazo || geral.prazo || '') || p.prazo;
+  var tol = Math.max(prazo, Date.parse(meu.tolerancia || geral.tolerancia || '') || p.tolerancia);
+  var agora = Date.now();
+  var status = agora > tol ? 'nao_entregue' : agora > prazo ? 'atrasada' : 'no_prazo';
+  return { nome: nome, status: status, tarefa: tarefa, prazo: new Date(prazo).toISOString(), tolerancia: new Date(tol).toISOString() };
+}
+
+/** Escala com os ajustes do admin (troca de tarefa e dispensa) para os e-mails. */
+function atribuicoesComAjustes_(offset) {
+  var aj = ajustesDoCiclo_(offset);
+  return getAtribuicoesSemana(offset)
+      .filter(function (a) { return !((aj[normNome_(a.morador.nome)] || {}).dispensa); })
+      .map(function (a) {
+        var t = (aj[normNome_(a.morador.nome)] || {}).tarefa;
+        if (!t) return a;
+        return { morador: a.morador, tarefa: { area: t, prazo: /LAVANDERIA/.test(normNome_(t)) ? 'SEGUNDA-FEIRA' : 'DOMINGO', freq: 'Semanal', desc: 'Tarefa trocada pelo admin nesta semana.' } };
+      });
+}
+
+/* ---------- e-mail com controle de cota ---------- */
+
+function enviarEmail_(opts) {
+  var restantes = MailApp.getRemainingDailyQuota();
+  var destinatarios = String(opts.to || '').split(',').filter(function (x) { return x.trim(); }).length || 1;
+  if (restantes < destinatarios) {
+    registrarLog('ERRO cota de e-mail', 'Cota do dia acabou: não enviado "' + opts.subject + '" para ' + opts.to);
+    salvarStatusApps_({ erro: 'cota diária de e-mail do Google acabou' });
+    return false;
+  }
+  MailApp.sendEmail(opts);
+  return true;
+}
+
+/** Status para o Diagnóstico da Administração (aba Config, chave statusAppsScript). */
+function salvarStatusApps_(extra) {
+  try {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var aba = ss.getSheetByName('Config');
+    if (!aba) return;
+    var dados = aba.getDataRange().getValues();
+    var status = { ultimoTick: new Date().toISOString(), emailsRestantes: MailApp.getRemainingDailyQuota(), erro: (extra && extra.erro) || '' };
+    var json = JSON.stringify(status);
+    for (var i = 0; i < dados.length; i++) {
+      if (String(dados[i][0]).trim() === 'statusAppsScript') {
+        aba.getRange(i + 1, 2).setValue(json);
+        return;
+      }
+    }
+    aba.appendRow(['statusAppsScript', json]);
+  } catch (e) {}
+}
+
 function estadoResidente_(estado, offset, nome) {
   if (!estado) return null;
   var chave = cicloKey_(offset);
@@ -1931,6 +2020,7 @@ function cobrancaTarefasTocah(estadoApp) {
       var nome = normNome_(a.morador.nome);
       if (feitos[nome]) return;
       var r = estadoResidente_(estado, offset, nome);
+      if (!r) r = residenteDaPlanilha_(offset, a); // servidor não respondeu: usa os ajustes direto da planilha
       if (r && (r.status === 'entregue' || r.status === 'dispensado' || r.status === 'nao_entregue')) return;
       if (r && r.tarefa) a = { morador: a.morador, tarefa: { area: r.tarefa, prazo: a.tarefa.prazo, freq: a.tarefa.freq, desc: a.tarefa.desc } };
       var p = r ? { prazo: Date.parse(r.prazo), tolerancia: Date.parse(r.tolerancia), lavanderia: /LAVANDERIA/.test(normNome_(r.tarefa)) } : prazosDoCiclo_(offset, a.tarefa.area);
@@ -1940,7 +2030,7 @@ function cobrancaTarefasTocah(estadoApp) {
       if (jaEnviado_(chave)) return;
       var extra = banh && banh.nome === a.morador.nome ? htmlEmailExtraBanheirao(tb) : '';
       var email = montarHtmlCobranca_(a, offset, est.id, p, extra);
-      MailApp.sendEmail({ to: a.morador.email, subject: email.assunto, htmlBody: email.html });
+      enviarEmail_({ to: a.morador.email, subject: email.assunto, htmlBody: email.html });
       marcarEnviado_(chave);
       enviados.push(a.morador.nome + ' (' + est.id + ')');
     });
@@ -1977,7 +2067,7 @@ function cobrancaAvaliacaoTocah_(dados) {
     var email = emailDe_(nome);
     if (!email) return;
     var aviso = { ciclo: ciclo.key, payload: { periodo: ciclo.periodo, fechamento: ciclo.fechamento } };
-    MailApp.sendEmail({
+    enviarEmail_({
       to: email,
       subject: ultimoDia ? '🚨 A avaliação fecha hoje · faltam ' + faltam + ' notas suas' : '⭐ Faltam ' + faltam + ' notas suas na avaliação · Tocah',
       htmlBody: htmlLembreteAvaliacao_(nome, faltam, aviso),
@@ -2013,7 +2103,7 @@ function avisarMultas_(aviso) {
       '<tr><td>' + htmlEmailLead('Isso entra no seu desempenho. Se achar que foi engano, fala no grupo da casa — a multa pode ser removida da aba Caixinha.') + '</td></tr>' +
       '<tr><td>' + botaoAvaliar_('Ver no app') + '</td></tr>' +
       htmlEmailCorpoFecha() + htmlEmailRodape() + htmlEmailDocClose();
-    MailApp.sendEmail({ to: email, subject: '💸 Multa de R$ ' + r.multa + ' na Caixinha · Tocah', htmlBody: html });
+    enviarEmail_({ to: email, subject: '💸 Multa de R$ ' + r.multa + ' na Caixinha · Tocah', htmlBody: html });
   });
 }
 

@@ -67,8 +67,10 @@ test('ciclo: avaliação abre com todos entregues e fecha quando todos avaliam',
   const res = c.cycleResults(s2, c.rulesFromConfig({}));
   const vitor = res.find((r) => r.nome === 'VITOR');
   assert.equal(vitor.media, 2);
-  assert.equal(vitor.multa, 60);
-  assert.match(vitor.motivo, /média 2,0/);
+  assert.equal(vitor.multa, 0); // média baixa: pendente até o admin confirmar
+  assert.equal(vitor.multaPendente, 60);
+  assert.match(vitor.motivoPendente, /média 2,0/);
+  assert.equal(c.cycleResults(s2, c.rulesFromConfig({ avaliacaoMultaMediaAuto: 'sim' })).find((r) => r.nome === 'VITOR').multa, 60);
   assert.equal(res.find((r) => r.nome === 'RAMON').mediaBanheirao, 4);
   assert.equal(res.find((r) => r.nome === 'ALLAN').multa, 0);
 });
@@ -150,4 +152,17 @@ test('ajustes do admin: prazo, tolerância, dispensa, abono, tarefa e fechar', (
   assert.equal(c.buildCycleState({ key, now: at('2026-11-16T11:00:00-03:00'), escala, checks, ajustes: abrir }).phase, 'avaliacao');
   const rows = c.parseDesempenhoRows([c.resultToRow(res.find((r) => r.nome === 'GUSTAVO'), 'x')]);
   assert.equal(rows[0].dispensado, true);
+});
+
+test('notas ao vivo escondem média com poucas notas e fuso automático', () => {
+  const key = '2026-W46';
+  const checks = Object.fromEntries(escala.map((e) => [e.nome, { ts: '2026-11-15T12:00:00-03:00' }]));
+  const rows = [[key, 'ALLAN', 'RAMON', 4, '', '', '', 'casa'], [key, 'ALLAN', 'RAMON', 5, '', '', '', 'banheirao'], [key, 'VITOR', 'ALLAN', 5, '', '', '', 'casa'], [key, 'RAMON', 'ALLAN', 3, '', '', '', 'casa']];
+  const s = c.buildCycleState({ key, now: at('2026-11-15T13:00:00-03:00'), escala, checks, ratingRows: rows });
+  const v = Object.fromEntries(c.notasAoVivo(s).map((n) => [n.nome, n]));
+  assert.equal(v.RAMON.media, null);
+  assert.equal(v.RAMON.aguardando, true);
+  assert.equal(v.RAMON.mediaBanheirao, null);
+  assert.equal(v.ALLAN.media, 4);
+  assert.equal(c.spOffset('2026-11-15'), '-03:00');
 });

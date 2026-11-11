@@ -4,6 +4,8 @@ import { useTheme } from '../theme/ThemeContext';
 import { useResident } from '../context/ResidentContext';
 import { useAvaliacao, useMyTask } from '../data/hooks';
 import { useAvaliarEntrega, useEntregarTarefa } from '../data/actions';
+import { useMoradorPin } from '../context/MoradorPinContext';
+import { invalidateResources } from '../data/store';
 import { formatWeekdayTime } from '../utils/date';
 import { displayName, norm, sameName } from '../utils/text';
 import { FeedPhoto } from './FeedPhoto';
@@ -86,6 +88,35 @@ const tarefaDe = (r) => (r ? `${r.tarefa}${r.extra ? ` + ${niceExtra(r.extra)}` 
 function niceExtra(extra) {
   const s = String(extra || '');
   return /BANHEIR/i.test(s) ? 'Banheirão' : s;
+}
+
+/* ---------------- Proteger com PIN ---------------- */
+
+export function PinAviso({ data, style }) {
+  const { resident } = useResident();
+  const { spacing } = useTheme();
+  const { criarPin } = useMoradorPin();
+  if (!data || data.meuPin || !resident) return null;
+  const criar = async () => {
+    try {
+      await criarPin(resident);
+      invalidateResources('avaliacao');
+    } catch {
+      /* cancelou */
+    }
+  };
+  return (
+    <Card variant="warning" onPress={criar} style={[{ marginBottom: spacing.md }, style]} accessibilityLabel="Criar meu PIN">
+      <View style={[styles.row, { gap: spacing.md }]}>
+        <Icon name="shield-lock-outline" size={26} color="onWarningSoft" />
+        <View style={{ flex: 1 }}>
+          <AppText variant="bodyStrong" color="onWarningSoft">Proteja suas entregas e notas</AppText>
+          <AppText variant="caption" color="onWarningSoft">Crie um PIN: assim ninguém manda foto ou dá nota no seu nome.</AppText>
+        </View>
+        <Icon name="chevron-right" color="onWarningSoft" />
+      </View>
+    </Card>
+  );
 }
 
 /* ---------------- Card "Sua tarefa" (Início e Tarefas) ---------------- */
@@ -405,6 +436,7 @@ export function AvaliarTab({ data }) {
         </AppText>
         {me && me.status !== 'entregue' && <AppText variant="captionStrong" color="onPrimarySoft" style={{ marginTop: spacing.xs }}>Você não entregou nessa semana, mas ainda pode avaliar.</AppText>}
       </Card>
+      <PinAviso data={data} />
       <NotasAoVivoCard ciclo={ciclo} />
       {ordenados.map((alvo) => (
         <AvaliarItem key={alvo.nome} ciclo={ciclo.key} alvo={alvo} rated={ciclo.ratedByMe?.[alvo.nome]} grupoBanheirao={data?.regras?.banheiraoGrupo || GRUPO_BANHEIRAO} />
@@ -444,7 +476,7 @@ export function NotasAoVivoCard({ ciclo, style }) {
         {!encerrada && <StatusPill label="Ao vivo" tone="danger" icon="circle" />}
       </View>
       <AppText variant="caption" color="textMuted" style={{ marginTop: 2, marginBottom: spacing.sm }}>
-        Média das notas recebidas até agora. Anônimas — muda na hora a cada nota (app ou e-mail).
+        Média das notas recebidas até agora, sem mostrar quem deu. Muda na hora a cada nota (app ou e-mail).
       </AppText>
       {notas.map((n, i) => {
         const entregou = n.status === 'entregue';
@@ -460,7 +492,7 @@ export function NotasAoVivoCard({ ciclo, style }) {
                       <View style={{ width: `${n.media ? (n.media / 5) * 100 : 0}%`, height: '100%', backgroundColor: colors.star, borderRadius: radius.pill }} />
                     </View>
                     <AppText variant="caption" color="textMuted" style={{ marginTop: 3 }}>
-                      {n.notas} de {n.esperadas} notas{n.esperadasBanheirao ? ` · banheirão ${fmt(n.mediaBanheirao)} (${n.notasBanheirao}/${n.esperadasBanheirao})` : ''}
+                      {n.notas} de {n.esperadas} notas{n.aguardando ? ' · média aparece a partir de 2 notas' : ''}{n.esperadasBanheirao ? ` · banheirão ${n.mediaBanheirao === null || n.mediaBanheirao === undefined ? 'quando os 2 avaliarem' : fmt(n.mediaBanheirao)} (${n.notasBanheirao}/${n.esperadasBanheirao})` : ''}
                     </AppText>
                   </>
                 ) : (
@@ -602,7 +634,7 @@ export function DesempenhoTab({ data, desempenho }) {
           'O banheirão só é avaliado por Allan, Gustavo e Ramon (quem entra no rodízio dele).',
           regras.multaAuto === false
             ? 'Multa automática desligada (aba Config).'
-            : `Multa de R$ ${regras.multaValor ?? 60} na Caixinha: não entregou até quarta, ou média abaixo de ${String(regras.mediaMinima ?? 3).replace('.', ',')} (com ${regras.minAvaliacoes ?? 2}+ notas).`,
+            : `Multa de R$ ${regras.multaValor ?? 60} na Caixinha para quem não entregou até o fim da tolerância. Média abaixo de ${String(regras.mediaMinima ?? 3).replace('.', ',')} (com ${regras.minAvaliacoes ?? 3}+ notas) ${regras.multaMediaAuto ? 'também gera multa automática' : 'vira multa só se o Guilherme confirmar'}.`,
           'As notas de cada um aparecem ao vivo durante a avaliação (sem mostrar quem deu).',
         ].map((t) => (
           <View key={t} style={[styles.row, { gap: spacing.sm, alignItems: 'flex-start', marginTop: spacing.sm }]}>

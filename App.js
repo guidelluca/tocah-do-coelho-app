@@ -7,6 +7,8 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { ThemeProvider, useTheme } from './src/theme/ThemeContext';
 import { ResidentProvider } from './src/context/ResidentContext';
 import { NotificationProvider } from './src/context/NotificationContext';
+import { MoradorPinProvider } from './src/context/MoradorPinContext';
+import { UpdateBanner } from './src/components/UpdateBanner';
 import { SyncProvider, invalidateResources } from './src/data/store';
 import { useConfig } from './src/data/hooks';
 import { ensureConfig } from './src/services/api';
@@ -69,6 +71,7 @@ function Root() {
       </View>
       <FirstRunGate />
       <ConfigBootstrap />
+      <UpdateBanner />
     </NavigationContainer>
   );
 }
@@ -81,7 +84,9 @@ export default function App() {
           <SyncProvider>
             <ResidentProvider>
               <NotificationProvider>
+                <MoradorPinProvider>
                 <Root />
+                </MoradorPinProvider>
               </NotificationProvider>
             </ResidentProvider>
           </SyncProvider>

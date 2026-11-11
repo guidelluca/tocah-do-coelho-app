@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { Screen } from '../components/Screen';
-import { AvaliarTab, DeliveryCard, DesempenhoTab, EntregasCard, GaleriaEntrega, NotasAoVivoCard } from '../components/tasks';
+import { AvaliarTab, DeliveryCard, DesempenhoTab, EntregasCard, GaleriaEntrega, NotasAoVivoCard, PinAviso } from '../components/tasks';
 import { ADMIN, AdminTab } from '../components/admin';
 import { sameName } from '../utils/text';
 import { AppText, BottomSheet, Card, Chip, Icon, SkeletonCard } from '../components/ui';
@@ -52,6 +52,7 @@ export function TasksScreen() {
 
       {tab === 'semana' && (
         <>
+          <PinAviso data={data} />
           <DeliveryCard />
           {emAvaliacao && faltam > 0 && (
             <Card variant="primary" onPress={() => setTab('avaliar')} style={{ marginBottom: spacing.md }} accessibilityLabel="Abrir avaliação">

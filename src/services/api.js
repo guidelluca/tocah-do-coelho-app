@@ -292,10 +292,11 @@ export const getFeedPhoto = (ts) => getAction('getFeedPhoto', { ts }, { cache: f
 // Avaliação semanal das tarefas
 export const getAvaliacaoSemana = (usuario) => getAction('getAvaliacaoSemana', { usuario });
 export const getDesempenho = () => getAction('getDesempenho');
-export const entregarTarefa = ({ usuario, ciclo = '', photos = [] }) =>
-  postAction('entregarTarefa', { usuario, ciclo, photos, photoDataUrl: photos[0] || '' }, { timeoutMs: 60000 });
-export const avaliarEntrega = ({ actor, target, ciclo, nota, comentario = '', categoria = 'casa' }) =>
-  postAction('avaliarEntrega', { actor, target, ciclo, nota, comentario, categoria });
+export const entregarTarefa = ({ usuario, ciclo = '', photos = [], moradorToken = '' }) =>
+  postAction('entregarTarefa', { usuario, ciclo, photos, photoDataUrl: photos[0] || '', moradorToken }, { timeoutMs: 60000 });
+export const avaliarEntrega = ({ actor, target, ciclo, nota, comentario = '', categoria = 'casa', moradorToken = '' }) =>
+  postAction('avaliarEntrega', { actor, target, ciclo, nota, comentario, categoria, moradorToken });
+export const postMoradorPin = (action, data) => postAction(action, data);
 
 // Administração (só Guilherme, com PIN)
 export const adminStatus = () => getAction('adminStatus', {}, { cache: false });
