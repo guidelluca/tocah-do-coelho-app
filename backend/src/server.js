@@ -65,6 +65,7 @@ const DEFAULT_CONFIG = [
   ['avaliacaoMultaValor', '60'],
   ['avaliacaoMediaMinima', '3'],
   ['avaliacaoMinAvaliacoes', '2'],
+  ['banheiraoGrupo', 'ALLAN,GUSTAVO,RAMON'],
 ];
 
 /* ======================================================================
@@ -738,6 +739,7 @@ async function avaliacaoSnapshot(usuario = '') {
       mediaMinima: ctx.rules.mediaMinima,
       minAvaliacoes: ctx.rules.minAvaliacoes,
       toleranciaDias: ctx.rules.toleranciaDias - 6,
+      banheiraoGrupo: ctx.rules.banheiraoGrupo,
     },
     atual: publicCycle(atual, { usuario }),
     anterior: publicCycle(anterior, { usuario }),
@@ -1048,6 +1050,7 @@ const postActions = {
     const alvo = state.residents.find((r) => r.nome === target);
     if (!alvo || alvo.status !== 'entregue') throw httpError(400, 'Esse morador não entregou a tarefa.');
     if (categoria === 'banheirao' && !alvo.banheirao) throw httpError(400, 'Esse morador não estava no banheirão.');
+    if (categoria === 'banheirao' && !ciclo.podeAvaliarBanheirao(actor, ctx.rules)) throw httpError(403, 'O banheirão só é avaliado por quem entra no rodízio dele.', { code: 'NOT_IN_GROUP' });
     const already = ciclo.ratedMap(state._rows, actor)[target]?.[categoria];
     if (already) throw httpError(409, 'Você já avaliou essa entrega.', { code: 'ALREADY_RATED' });
     const ts = new Date().toISOString();

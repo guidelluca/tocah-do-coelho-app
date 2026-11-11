@@ -53,12 +53,14 @@ test('ciclo: avaliação abre com todos entregues e fecha quando todos avaliam',
   const checks = Object.fromEntries(escala.map((e) => [e.nome, { ts: '2026-11-15T12:00:00-03:00', photoDataUrl: 'x' }]));
   const s = c.buildCycleState({ key, now: at('2026-11-15T13:00:00-03:00'), escala, checks });
   assert.equal(s.phase, 'avaliacao');
-  assert.equal(s.avaliacoes.esperadas, 5 * 4 + 4); // + banheirão do Ramon avaliado por 4
+  assert.equal(s.avaliacoes.esperadas, 5 * 4 + 2); // + banheirão do Ramon: só Allan e Gustavo avaliam
+  assert.equal(c.podeAvaliarBanheirao('VITOR'), false);
+  assert.equal(c.podeAvaliarBanheirao('gustavo'), true);
   const rows = [];
   escala.forEach((a) => escala.forEach((t) => {
     if (a.nome === t.nome) return;
     rows.push([key, a.nome, t.nome, t.nome === 'VITOR' ? 2 : 5, t.tarefa, 'ok', '', 'casa']);
-    if (t.extra) rows.push([key, a.nome, t.nome, 4, t.tarefa, '', '', 'banheirao']);
+    if (t.extra && ['ALLAN', 'GUSTAVO'].includes(a.nome)) rows.push([key, a.nome, t.nome, 4, t.tarefa, '', '', 'banheirao']);
   }));
   const s2 = c.buildCycleState({ key, now: at('2026-11-16T13:00:00-03:00'), escala, checks, ratingRows: rows });
   assert.equal(s2.phase, 'encerrada');

@@ -23,6 +23,8 @@ const DEFAULT_RULES = {
   multaValor: 60,
   mediaMinima: 3,
   minAvaliacoes: 2,
+  /** Só quem entra no rodízio do banheirão avalia o banheirão. */
+  banheiraoGrupo: ['ALLAN', 'GUSTAVO', 'RAMON'],
 };
 
 function rulesFromConfig(config = {}) {
@@ -44,6 +46,9 @@ function rulesFromConfig(config = {}) {
     multaValor: Math.max(0, num(config.avaliacaoMultaValor, DEFAULT_RULES.multaValor)),
     mediaMinima: num(config.avaliacaoMediaMinima, DEFAULT_RULES.mediaMinima),
     minAvaliacoes: Math.max(1, Math.round(num(config.avaliacaoMinAvaliacoes, DEFAULT_RULES.minAvaliacoes))),
+    banheiraoGrupo: String(config.banheiraoGrupo || '').trim()
+      ? String(config.banheiraoGrupo).split(/[,;]/).map((x) => norm(x)).filter(Boolean)
+      : DEFAULT_RULES.banheiraoGrupo,
   };
 }
 
@@ -135,6 +140,10 @@ function deadlineFor(tarefa, info) {
   return isLavanderia(tarefa) ? info.prazoLavanderia : info.prazo;
 }
 
+function podeAvaliarBanheirao(nome, rules = DEFAULT_RULES) {
+  return (rules.banheiraoGrupo || DEFAULT_RULES.banheiraoGrupo).includes(norm(nome));
+}
+
 function lateDays(ts, deadline) {
   const t = typeof ts === 'number' ? ts : Date.parse(ts);
   if (!Number.isFinite(t) || t <= deadline) return 0;
@@ -183,7 +192,7 @@ function buildCycleState({ key, now = Date.now(), escala = [], checks = {}, rati
     delivered.forEach((t) => {
       if (t.nome === rater.nome) return;
       expected.push({ actor: rater.nome, target: t.nome, categoria: 'casa' });
-      if (t.banheirao) expected.push({ actor: rater.nome, target: t.nome, categoria: 'banheirao' });
+      if (t.banheirao && podeAvaliarBanheirao(rater.nome, rules)) expected.push({ actor: rater.nome, target: t.nome, categoria: 'banheirao' });
     });
   });
   const done = expected.filter((x) => given.has(`${norm(x.actor)}|${norm(x.target)}|${x.categoria}`));
@@ -240,7 +249,10 @@ function cycleResults(state, rules = DEFAULT_RULES) {
   return state.residents.map((r) => {
     const mine = state._rows.filter((x) => norm(x[2]) === norm(r.nome));
     const casa = mine.filter((x) => (String(x[7] || 'casa').trim().toLowerCase() || 'casa') === 'casa').map((x) => Number(x[3])).filter(Number.isFinite);
-    const ban = mine.filter((x) => String(x[7] || '').trim().toLowerCase() === 'banheirao').map((x) => Number(x[3])).filter(Number.isFinite);
+    const ban = mine
+      .filter((x) => String(x[7] || '').trim().toLowerCase() === 'banheirao' && podeAvaliarBanheirao(x[1], rules))
+      .map((x) => Number(x[3]))
+      .filter(Number.isFinite);
     const comentarios = mine.map((x) => String(x[5] || '').trim()).filter(Boolean);
     const entregou = r.status === 'entregue';
     const media = casa.length ? Math.round(avg(casa) * 100) / 100 : null;
@@ -406,6 +418,7 @@ module.exports = {
   cycleInfo,
   deadlineFor,
   lateDays,
+  podeAvaliarBanheirao,
   isLavanderia,
   hasBanheirao,
   buildCycleState,

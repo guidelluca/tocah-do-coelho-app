@@ -293,14 +293,16 @@ export function Stars({ value, onChange, size = 34, label }) {
 
 const NOTA_TXT = ['Toque nas estrelas', 'Ficou devendo', 'Dá pra melhorar', 'Ok', 'Bem feito', 'Impecável'];
 
-function AvaliarItem({ ciclo, alvo, rated, onDone }) {
+const GRUPO_BANHEIRAO = ['ALLAN', 'GUSTAVO', 'RAMON'];
+
+function AvaliarItem({ ciclo, alvo, rated, onDone, grupoBanheirao = GRUPO_BANHEIRAO }) {
   const { resident } = useResident();
   const { spacing, radius, colors } = useTheme();
   const { avaliar, busyTarget } = useAvaliarEntrega(resident);
   const [casa, setCasa] = useState(0);
   const [ban, setBan] = useState(0);
   const [comentario, setComentario] = useState('');
-  const precisaBan = alvo.banheirao;
+  const precisaBan = alvo.banheirao && grupoBanheirao.some((n) => sameName(n, resident));
   const feito = rated?.casa && (!precisaBan || rated?.banheirao);
   const pronto = (rated?.casa || casa > 0) && (!precisaBan || rated?.banheirao || ban > 0);
 
@@ -397,7 +399,7 @@ export function AvaliarTab({ data }) {
         {me && me.status !== 'entregue' && <AppText variant="captionStrong" color="onPrimarySoft" style={{ marginTop: spacing.xs }}>Você não entregou nessa semana, mas ainda pode avaliar.</AppText>}
       </Card>
       {ordenados.map((alvo) => (
-        <AvaliarItem key={alvo.nome} ciclo={ciclo.key} alvo={alvo} rated={ciclo.ratedByMe?.[alvo.nome]} />
+        <AvaliarItem key={alvo.nome} ciclo={ciclo.key} alvo={alvo} rated={ciclo.ratedByMe?.[alvo.nome]} grupoBanheirao={data?.regras?.banheiraoGrupo || GRUPO_BANHEIRAO} />
       ))}
       {faltaram.filter((r) => !sameName(r.nome, resident)).length > 0 && (
         <Card style={{ marginBottom: spacing.md }}>
@@ -559,6 +561,7 @@ export function DesempenhoTab({ data, desempenho }) {
           'Prazo: domingo 23h59. Lavanderia e Panos vai até segunda 23h59.',
           `Atrasou? Dá pra entregar até quarta 23h59 — o atraso em dias fica registrado.`,
           'A avaliação abre quando os 5 entregam (ou na quarta). Cada um avalia os outros, de forma anônima.',
+          'O banheirão só é avaliado por Allan, Gustavo e Ramon (quem entra no rodízio dele).',
           regras.multaAuto === false
             ? 'Multa automática desligada (aba Config).'
             : `Multa de R$ ${regras.multaValor ?? 60} na Caixinha: não entregou até quarta, ou média abaixo de ${String(regras.mediaMinima ?? 3).replace('.', ',')} (com ${regras.minAvaliacoes ?? 2}+ notas).`,
