@@ -502,13 +502,21 @@ function enviarNotificacoesDiarias() {
   // ou atrasado recebe os avisos dela — o diário simples não sai junto.
   var reguaAtiva = ScriptApp.getProjectTriggers().some(function (t) { return t.getHandlerFunction() === 'tickAvaliacaoTocah'; });
   var feitosAnt = reguaAtiva && cicloKey_(-1) >= avaliacaoInicio_() ? concluidasNoApp_(-1) : null;
+  var estado = reguaAtiva ? estadoAvaliacaoDoApp_() : null;
 
   atribuicoes.forEach(function (a) {
     if (feitos[normNome_(a.morador.nome)] && !tarefaDiaria_(a.tarefa)) {
       pulados.push(a.morador.nome);
       return;
     }
-    if (reguaAtiva && !feitos[normNome_(a.morador.nome)] && (temCobrancaHoje_(a, 0) || (feitosAnt && !feitosAnt[normNome_(a.morador.nome)]))) {
+    var rAtual = estadoResidente_(estado, 0, a.morador.nome);
+    if (rAtual && rAtual.status === 'dispensado') {
+      pulados.push(a.morador.nome + ' (dispensado)');
+      return;
+    }
+    var rAnt = estadoResidente_(estado, -1, a.morador.nome);
+    var devendoAnt = feitosAnt && !feitosAnt[normNome_(a.morador.nome)] && !(rAnt && rAnt.status === 'dispensado');
+    if (reguaAtiva && !feitos[normNome_(a.morador.nome)] && (temCobrancaHoje_(a, 0, estado) || devendoAnt)) {
       pulados.push(a.morador.nome + ' (régua)');
       return;
     }
@@ -1515,6 +1523,7 @@ function emailDe_(nome) {
 }
 
 function pillStatusEntrega_(e) {
+  if (e.status === 'dispensado') return htmlEmailPill_('Dispensado da semana', TOCAH_COR.surfaceAlt, TOCAH_COR.textMuted);
   if (e.status === 'entregue') {
     return e.atrasoDias ?
       htmlEmailPill_('Entregue +' + e.atrasoDias + (e.atrasoDias > 1 ? ' dias' : ' dia'), TOCAH_COR.warningSoft, TOCAH_COR.onWarningSoft) :
@@ -1523,7 +1532,21 @@ function pillStatusEntrega_(e) {
   return htmlEmailPill_('Não entregou', TOCAH_COR.dangerSoft, TOCAH_COR.onDangerSoft);
 }
 
-function cardEntregaEmail_(e, cid, totalFotos) {
+/** Linha de 5 estrelas clicáveis: cada uma abre a página de avaliação já com a nota marcada. */
+function estrelasLinkEmail_(link, alvo) {
+  if (!link) return '';
+  var ff = htmlEmailFontStack();
+  var celulas = '';
+  for (var n = 1; n <= 5; n++) {
+    celulas += '<td align="center" style="padding:0 2px;"><a href="' + link + '&alvo=' + encodeURIComponent(alvo) + '&nota=' + n + '#' + alvo + '" ' +
+      'style="display:block;padding:8px 0;border-radius:12px;background-color:' + TOCAH_COR.surfaceAlt + ';font-family:' + ff + ';font-size:22px;line-height:1;color:#F5A524;text-decoration:none;" title="' + n + ' estrela' + (n > 1 ? 's' : '') + '">' +
+      '★<span style="display:block;margin-top:2px;font-size:11px;font-weight:800;color:' + TOCAH_COR.textMuted + ';">' + n + '</span></a></td>';
+  }
+  return '<div style="margin-top:12px;font-family:' + ff + ';font-size:12px;font-weight:800;color:' + TOCAH_COR.textMuted + ';text-align:center;">Toque na nota (confirma na página):</div>' +
+    '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:6px;border-collapse:separate;table-layout:fixed;"><tr>' + celulas + '</tr></table>';
+}
+
+function cardEntregaEmail_(e, cid, totalFotos, link) {
   var ff = htmlEmailFontStack();
   var foto = cid ?
     '<img src="cid:' + cid + '" alt="Foto da tarefa de ' + nomeCurto_(e.nome) + '" width="560" style="display:block;width:100%;max-width:560px;height:auto;margin-top:12px;border-radius:16px;" />' :
@@ -1536,13 +1559,13 @@ function cardEntregaEmail_(e, cid, totalFotos) {
     '<div style="margin-top:2px;font-size:17px;font-weight:900;line-height:1.25;color:' + TOCAH_COR.text + ';">' + nomeBonitoTarefa_(e.tarefa) + (e.extra ? ' + ' + nomeBonitoTarefa_(e.extra) : '') + '</div>' +
     '</td></tr></table>';
   var mais = totalFotos > 1 ? '<div style="margin-top:8px;font-size:13px;font-weight:800;color:' + TOCAH_COR.primary + ';">📷 +' + (totalFotos - 1) + ' foto' + (totalFotos > 2 ? 's' : '') + ' no app</div>' : '';
-  return htmlEmailCard_(topo + '<div style="margin-top:10px;">' + pillStatusEntrega_(e) + '</div>' + (e.status === 'entregue' ? foto + mais : ''));
+  return htmlEmailCard_(topo + '<div style="margin-top:10px;">' + pillStatusEntrega_(e) + '</div>' + (e.status === 'entregue' ? foto + mais + estrelasLinkEmail_(link, e.nome) : ''));
 }
 
-function botaoAvaliar_(texto) {
+function botaoAvaliar_(texto, url) {
   return '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:4px 0 12px;border-collapse:separate;"><tr>' +
     '<td align="center" style="border-radius:16px;background-color:' + TOCAH_COR.primary + ';">' +
-    '<a href="' + APP_URL + '" style="display:block;padding:15px 18px;font-family:' + htmlEmailFontStack() +
+    '<a href="' + (url || APP_URL) + '" style="display:block;padding:15px 18px;font-family:' + htmlEmailFontStack() +
     ';font-size:15px;font-weight:900;color:#FFFFFF;text-decoration:none;border-radius:16px;">' + texto + '</a></td></tr></table>';
 }
 
@@ -1550,23 +1573,39 @@ function htmlAvaliacaoAberta_(destNome, aviso, cids, totais) {
   var p = aviso.payload;
   var outros = p.entregas.filter(function (e) { return normNome_(e.nome) !== normNome_(destNome); });
   var entregues = outros.filter(function (e) { return e.status === 'entregue'; });
-  var cards = outros.map(function (e) { return '<tr><td>' + cardEntregaEmail_(e, cids[normNome_(e.nome)], (totais || {})[normNome_(e.nome)] || 0) + '</td></tr>'; }).join('');
+  var link = (p.links || {})[normNome_(destNome)] || '';
+  var cards = outros.map(function (e) { return '<tr><td>' + cardEntregaEmail_(e, cids[normNome_(e.nome)], (totais || {})[normNome_(e.nome)] || 0, link) + '</td></tr>'; }).join('');
   return htmlEmailDocOpen('Avaliação aberta: avalie ' + entregues.length + ' tarefas até ' + dataBonita_(p.fechamento) + '.') +
     htmlEmailHeroRoxo('Avaliação da semana', '⭐ Semana ' + p.periodo + ' · fecha ' + dataBonita_(p.fechamento), true, 'Tarefas da casa') +
     htmlEmailCorpoAbre() +
-    '<tr><td>' + htmlEmailLead('Oi, ' + nomeCurto_(destNome) + '! Todo mundo já mandou a foto (ou o prazo acabou). Avalie as entregas da galera no app — é anônimo, de 1 a 5, com comentário se quiser.') + '</td></tr>' +
-    '<tr><td>' + botaoAvaliar_('Avaliar no app ⭐') + '</td></tr>' +
+    '<tr><td>' + htmlEmailLead('Oi, ' + nomeCurto_(destNome) + '! Todo mundo já mandou a foto (ou o prazo acabou). Avalie aqui pelo e-mail (toque nas estrelas) ou pelo app — vale o mesmo e aparece nos dois na hora. É anônimo, de 1 a 5.') + '</td></tr>' +
+    '<tr><td>' + botaoAvaliar_('Avaliar todos pelo navegador ⭐', link) + '</td></tr>' +
     cards +
     htmlEmailCorpoFecha() + htmlEmailRodape() + htmlEmailDocClose();
 }
 
+function linkAvaliacaoDe_(ciclo, nome) {
+  try {
+    var aba = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(ABA_AVISOS);
+    if (!aba || aba.getLastRow() < 2) return '';
+    var linhas = aba.getRange(2, 1, aba.getLastRow() - 1, 6).getValues();
+    for (var i = 0; i < linhas.length; i++) {
+      if (String(linhas[i][1]) === 'avaliacao_aberta' && String(linhas[i][2]) === ciclo) {
+        return (JSON.parse(String(linhas[i][5] || '{}')).links || {})[normNome_(nome)] || '';
+      }
+    }
+  } catch (e) {}
+  return '';
+}
+
 function htmlLembreteAvaliacao_(destNome, faltam, aviso) {
   var p = aviso.payload;
+  var link = p.link || linkAvaliacaoDe_(aviso.ciclo || '', destNome);
   return htmlEmailDocOpen('Faltam ' + faltam + ' notas suas na avaliação da semana.') +
     htmlEmailHeroRoxo('Oi, ' + nomeCurto_(destNome) + '!', '⏰ A avaliação fecha ' + dataBonita_(p.fechamento), true, 'Avaliação da semana') +
     htmlEmailCorpoAbre() +
     '<tr><td>' + htmlEmailLead('Faltam <b>' + faltam + '</b> nota' + (faltam > 1 ? 's' : '') + ' suas na avaliação da semana ' + p.periodo + '. Leva 1 minuto.', true) + '</td></tr>' +
-    '<tr><td>' + botaoAvaliar_('Avaliar agora ⭐') + '</td></tr>' +
+    '<tr><td>' + botaoAvaliar_('Avaliar agora ⭐', link) + '</td></tr>' +
     htmlEmailCorpoFecha() + htmlEmailRodape() + htmlEmailDocClose();
 }
 
@@ -1636,13 +1675,14 @@ function tickAvaliacaoTocah() {
   } catch (e) {
     // servidor dormindo: tenta de novo na próxima hora; os avisos já gravados seguem abaixo
   }
+  var estado = estadoAvaliacaoDoApp_();
   try {
-    cobrancaTarefasTocah();
+    cobrancaTarefasTocah(estado);
   } catch (e) {
     registrarLog('ERRO cobrança de tarefas', String(e));
   }
   try {
-    cobrancaAvaliacaoTocah_(estadoAvaliacaoDoApp_());
+    cobrancaAvaliacaoTocah_(estado);
   } catch (e) {
     registrarLog('ERRO cobrança de avaliação', String(e));
   }
@@ -1699,6 +1739,22 @@ function enviarAviso_(aviso) {
         htmlBody: htmlAvaliacaoAberta_(m.nome, aviso, cids, totais),
         inlineImages: inline,
       });
+    });
+  } else if (aviso.tipo === 'cobranca_manual') {
+    (p.pendentes || []).forEach(function (x) {
+      var email = emailDe_(x.nome);
+      if (!email) return;
+      if (p.tipo === 'avaliacao') {
+        MailApp.sendEmail({ to: email, subject: '📣 O Guilherme pediu: faltam ' + x.faltam + ' notas suas · Tocah', htmlBody: htmlLembreteAvaliacao_(x.nome, x.faltam, { ciclo: aviso.ciclo, payload: { periodo: p.periodo, fechamento: p.fechamento, link: x.link } }) });
+      } else {
+        var a = getAtribuicoesSemana(0).filter(function (q) { return normNome_(q.morador.nome) === normNome_(x.nome); })[0] ||
+          { morador: { nome: x.nome, email: email }, tarefa: { area: x.tarefa, freq: '', desc: '' } };
+        a.tarefa.area = x.tarefa || a.tarefa.area;
+        var pz = { prazo: Date.parse(x.prazo), tolerancia: Date.parse(x.tolerancia), lavanderia: false };
+        var est = x.status === 'atrasada' ? 'atrasada_manual' : 'prazo_hoje';
+        var mail = montarHtmlCobranca_(a, x.status === 'atrasada' ? -1 : 0, est, pz, '');
+        MailApp.sendEmail({ to: email, subject: '📣 Cobrança da casa: ' + mail.assunto, htmlBody: mail.html });
+      }
     });
   } else if (aviso.tipo === 'lembrete_avaliacao') {
     // coberto pelo lembrete diário das 19h (cobrancaAvaliacaoTocah_)
@@ -1799,7 +1855,7 @@ function multaValor_() {
 }
 
 function textoCobranca_(estagioId, vars) {
-  var base = COBRANCA_TEXTOS[estagioId.indexOf('atrasada_') === 0 ? 'atrasada' : estagioId];
+  var base = COBRANCA_TEXTOS[estagioId.indexOf('atrasada_') === 0 ? 'atrasada' : estagioId] || COBRANCA_TEXTOS.prazo_hoje;
   var f = function (s) {
     return String(s).replace(/\{(\w+)\}/g, function (_, k) { return vars[k] !== undefined ? vars[k] : ''; });
   };
@@ -1849,10 +1905,20 @@ function limparMarcasAntigas_() {
   });
 }
 
+/** Situação do morador no app (prazo ajustado pelo admin, dispensa etc.). null se o app não respondeu. */
+function estadoResidente_(estado, offset, nome) {
+  if (!estado) return null;
+  var chave = cicloKey_(offset);
+  var c = [estado.anterior, estado.atual].filter(function (x) { return x && x.key === chave; })[0];
+  if (!c) return null;
+  return (c.residents || []).filter(function (r) { return normNome_(r.nome) === normNome_(nome); })[0] || null;
+}
+
 /** Quem não entregou recebe o aviso certo para o momento (uma vez por estágio). */
-function cobrancaTarefasTocah() {
+function cobrancaTarefasTocah(estadoApp) {
   var agora = agoraSP_();
   if (agora.hora < 8 || agora.hora > 23) return;
+  var estado = estadoApp === undefined ? estadoAvaliacaoDoApp_() : estadoApp;
   var inicio = avaliacaoInicio_();
   var enviados = [];
   [-1, 0].forEach(function (offset) {
@@ -1865,7 +1931,10 @@ function cobrancaTarefasTocah() {
     atrib.forEach(function (a) {
       var nome = normNome_(a.morador.nome);
       if (feitos[nome]) return;
-      var p = prazosDoCiclo_(offset, a.tarefa.area);
+      var r = estadoResidente_(estado, offset, nome);
+      if (r && (r.status === 'entregue' || r.status === 'dispensado' || r.status === 'nao_entregue')) return;
+      if (r && r.tarefa) a = { morador: a.morador, tarefa: { area: r.tarefa, prazo: a.tarefa.prazo, freq: a.tarefa.freq, desc: a.tarefa.desc } };
+      var p = r ? { prazo: Date.parse(r.prazo), tolerancia: Date.parse(r.tolerancia), lavanderia: /LAVANDERIA/.test(normNome_(r.tarefa)) } : prazosDoCiclo_(offset, a.tarefa.area);
       var est = estagioCobranca_(p, agora);
       if (!est) return;
       var chave = 'cob:' + ciclo + ':' + nome + ':' + est.id;
@@ -1881,8 +1950,9 @@ function cobrancaTarefasTocah() {
 }
 
 /** Hoje algum aviso da régua cobre essa pessoa? (aí o lembrete diário simples não sai). */
-function temCobrancaHoje_(a, offset) {
-  var p = prazosDoCiclo_(offset, a.tarefa.area);
+function temCobrancaHoje_(a, offset, estado) {
+  var r = estadoResidente_(estado, offset, a.morador.nome);
+  var p = r ? { prazo: Date.parse(r.prazo) } : prazosDoCiclo_(offset, a.tarefa.area);
   var hoje = agoraSP_().dia;
   var diasAte = Math.round((Date.parse(diaSP_(p.prazo) + 'T12:00:00-03:00') - Date.parse(hoje + 'T12:00:00-03:00')) / DIA);
   return diasAte <= 2;
@@ -1907,7 +1977,7 @@ function cobrancaAvaliacaoTocah_(dados) {
     if (jaEnviado_(chave)) return;
     var email = emailDe_(nome);
     if (!email) return;
-    var aviso = { payload: { periodo: ciclo.periodo, fechamento: ciclo.fechamento } };
+    var aviso = { ciclo: ciclo.key, payload: { periodo: ciclo.periodo, fechamento: ciclo.fechamento } };
     MailApp.sendEmail({
       to: email,
       subject: ultimoDia ? '🚨 A avaliação fecha hoje · faltam ' + faltam + ' notas suas' : '⭐ Faltam ' + faltam + ' notas suas na avaliação · Tocah',
@@ -1952,7 +2022,12 @@ function avisarMultas_(aviso) {
 function htmlPendentesSemanaPassada_() {
   if (cicloKey_(-1) < avaliacaoInicio_()) return '';
   var feitos = concluidasNoApp_(-1);
-  var pend = getAtribuicoesSemana(-1).filter(function (a) { return !feitos[normNome_(a.morador.nome)]; });
+  var estado = estadoAvaliacaoDoApp_();
+  var pend = getAtribuicoesSemana(-1).filter(function (a) {
+    var r = estadoResidente_(estado, -1, a.morador.nome);
+    if (r && r.status === 'dispensado') return false;
+    return !feitos[normNome_(a.morador.nome)];
+  });
   if (!pend.length) return '';
   var nomes = pend.map(function (a) { return '<b>' + nomeCurto_(a.morador.nome) + '</b> (' + nomeBonitoTarefa_(a.tarefa.area) + ')'; }).join(', ');
   return '<tr><td>' + htmlEmailLead('📸 Ainda falta a foto da semana passada: ' + nomes + '. Dá até <b>quarta 23h59</b> — depois disso entra multa de R$ ' + multaValor_() + '.', true) + '</td></tr>\n';

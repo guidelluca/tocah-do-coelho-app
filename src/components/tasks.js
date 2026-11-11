@@ -45,6 +45,7 @@ export function statusInfo(r) {
   }
   if (r.status === 'atrasada') return { label: `Atrasada ${plural(r.atrasoDias, 'dia', 'dias')}`, tone: 'danger', icon: 'clock-alert-outline' };
   if (r.status === 'nao_entregue') return { label: 'Não entregou', tone: 'danger', icon: 'close-circle-outline' };
+  if (r.status === 'dispensado') return { label: 'Dispensado', tone: 'neutral', icon: 'airplane' };
   return { label: 'No prazo', tone: 'neutral', icon: 'clock-outline' };
 }
 
@@ -112,6 +113,7 @@ export function DeliveryCard({ style, compact }) {
   }
 
   const atrasadaAnterior = e.status === 'atrasada' && e.ciclo !== av.data?.atual?.key;
+  const dispensado = e.status === 'dispensado';
   const entregue = e.status === 'entregue';
   const info = statusInfo(e);
   const isLav = /LAVANDERIA/i.test(norm(e.tarefa));
@@ -135,7 +137,7 @@ export function DeliveryCard({ style, compact }) {
         <Avatar name={resident} size={48} ring={entregue ? 'success' : atrasadaAnterior ? 'danger' : undefined} />
         <View style={{ flex: 1, minWidth: 0 }}>
           <AppText variant="title">{e.tarefa || 'Tarefa da semana'}</AppText>
-          {!entregue && (
+          {!entregue && !dispensado && (
             <AppText variant="captionStrong" color={atrasadaAnterior ? 'danger' : 'primary'}>
               {atrasadaAnterior ? `Envie até ${prazoCurto(e.tolerancia)} · ${faltaLabel(e.tolerancia)}` : `Prazo ${prazoCurto(e.prazo)} · ${faltaLabel(e.prazo)}`}
             </AppText>
@@ -163,7 +165,12 @@ export function DeliveryCard({ style, compact }) {
         </View>
       )}
 
-      {entregue ? (
+      {dispensado ? (
+        <View style={{ marginTop: spacing.md, padding: spacing.md, borderRadius: radius.md, backgroundColor: colors.surfaceAlt }}>
+          <AppText variant="bodyStrong">Você está dispensado nesta semana ✈️</AppText>
+          <AppText variant="caption" color="textMuted">{e.motivoDispensa ? `Motivo: ${e.motivoDispensa}. ` : ''}Não precisa entregar e não leva multa.</AppText>
+        </View>
+      ) : entregue ? (
         <View style={{ marginTop: spacing.md, gap: spacing.sm }}>
           <View>
             <AppText variant="bodyStrong" color={e.atrasoDias ? 'warning' : 'success'}>
@@ -574,6 +581,34 @@ export function DesempenhoTab({ data, desempenho }) {
         ))}
       </Card>
     </>
+  );
+}
+
+/* ---------------- Destaque da semana (Início) ---------------- */
+
+export function DestaqueSemanaCard({ onPress, style }) {
+  const { resident } = useResident();
+  const { spacing } = useTheme();
+  const av = useAvaliacao(resident);
+  const r = av.data?.ultimoResultado;
+  if (!r?.resultados?.length) return null;
+  const fechou = Date.parse(r.fechamento);
+  if (Number.isFinite(fechou) && Date.now() - fechou > 8 * DAY) return null;
+  const top = [...r.resultados].filter((x) => x.media !== null && x.media !== undefined).sort((a, b) => b.media - a.media)[0];
+  if (!top) return null;
+  const meu = r.resultados.find((x) => sameName(x.nome, resident));
+  return (
+    <Card onPress={onPress} style={[{ marginBottom: spacing.md }, style]} accessibilityLabel="Ver resultado da semana">
+      <View style={[styles.row, { gap: spacing.md }]}>
+        <Avatar name={top.nome} size={44} ring="star" />
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <AppText variant="overline" color="primary">🏆 Destaque da semana {r.periodo}</AppText>
+          <AppText variant="bodyStrong" numberOfLines={1}>{displayName(top.nome)} · ⭐ {Number(top.media).toFixed(1).replace('.', ',')}</AppText>
+          {meu && <AppText variant="caption" color="textMuted" numberOfLines={1}>Sua nota: {meu.media === null || meu.media === undefined ? '—' : Number(meu.media).toFixed(1).replace('.', ',')}{meu.multa ? ` · multa R$ ${meu.multa}` : ''}</AppText>}
+        </View>
+        <Icon name="chevron-right" color="textSubtle" />
+      </View>
+    </Card>
   );
 }
 

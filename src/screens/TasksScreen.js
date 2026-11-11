@@ -3,6 +3,8 @@ import { StyleSheet, View } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { Screen } from '../components/Screen';
 import { AvaliarTab, DeliveryCard, DesempenhoTab, EntregasCard, GaleriaEntrega } from '../components/tasks';
+import { ADMIN, AdminTab } from '../components/admin';
+import { sameName } from '../utils/text';
 import { AppText, BottomSheet, Card, Chip, Icon, SkeletonCard } from '../components/ui';
 import { useResident } from '../context/ResidentContext';
 import { useTheme } from '../theme/ThemeContext';
@@ -43,6 +45,7 @@ export function TasksScreen() {
         <Chip label="Semana" icon="calendar-check-outline" selected={tab === 'semana'} onPress={() => setTab('semana')} />
         <Chip label="Avaliar" icon="star-outline" selected={tab === 'avaliar'} onPress={() => setTab('avaliar')} count={faltam > 0 ? faltam : undefined} />
         <Chip label="Desempenho" icon="podium" selected={tab === 'desempenho'} onPress={() => setTab('desempenho')} />
+        {sameName(resident, ADMIN) && <Chip label="Admin" icon="shield-account-outline" selected={tab === 'admin'} onPress={() => setTab('admin')} />}
       </View>
 
       {av.loading && !data && <SkeletonCard lines={4} />}
@@ -78,6 +81,7 @@ export function TasksScreen() {
       )}
 
       {tab === 'avaliar' && data && <AvaliarTab data={data} />}
+      {tab === 'admin' && sameName(resident, ADMIN) && <AdminTab />}
       {tab === 'desempenho' && (desempenho.loading && !desempenho.data ? <SkeletonCard lines={5} /> : <DesempenhoTab data={data} desempenho={desempenho.data} />)}
 
       <BottomSheet visible={photoList.length > 0} onClose={() => setPhotoList([])} title={photoList.length > 1 ? `Fotos da tarefa (${photoList.length})` : 'Foto da tarefa'}>

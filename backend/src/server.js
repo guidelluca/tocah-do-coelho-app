@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
 const zlib = require('zlib');
+const crypto = require('crypto');
 const { google } = require('googleapis');
 
 const { getCell, norm, toNumberLike, normalizeMoney2, colLetter, brl } = require('./lib/text');
@@ -15,6 +16,7 @@ dotenv.config();
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '30mb' }));
+app.use(express.urlencoded({ extended: false, limit: '1mb' }));
 
 const {
   PORT = 4000,
@@ -45,6 +47,11 @@ const {
   DESEMPENHO_SHEET = 'Desempenho',
   MULTAS_SHEET = 'MultasTarefas',
   AVISOS_SHEET = 'AvisosEmail',
+  AJUSTES_SHEET = 'AjustesTarefas',
+  /** PIN da administração (opcional: sem ele, o Guilherme cria o PIN pelo app). */
+  ADMIN_PIN,
+  APP_SECRET,
+  PUBLIC_URL,
 } = process.env;
 
 const DEFAULT_FINANCE_MODE = 'AUTO';
@@ -532,7 +539,89 @@ function statusFields(check) {
  * ==================================================================== */
 
 const AVISOS_HEADER = ['id', 'tipo', 'ciclo', 'criadoEm', 'enviadoEm', 'payload'];
-const MULTAS_HEADER = ['ciclo', 'morador', 'valor', 'motivo', 'lancadoEm'];
+const MULTAS_HEADER = ['ciclo', 'morador', 'valor', 'motivo', 'lancadoEm', 'status', 'obs'];
+const ADMIN_MORADOR = 'GUILHERME';
+
+/* ---------- segredo, tokens e PIN ---------- */
+
+function appSecret() {
+  if (APP_SECRET) return APP_SECRET;
+  let key = '';
+  try {
+    key = JSON.parse(GOOGLE_SERVICE_ACCOUNT_JSON || '{}').private_key || '';
+  } catch {
+    key = String(GOOGLE_SERVICE_ACCOUNT_JSON || '');
+  }
+  return crypto.createHash('sha256').update(`tocah:${key}:${SPREADSHEET_ID || ''}`).digest('hex');
+}
+const hmac = (msg) => crypto.createHmac('sha256', appSecret()).update(msg).digest('base64url');
+const b64u = (s) => Buffer.from(s, 'utf8').toString('base64url');
+const unb64u = (s) => Buffer.from(String(s || ''), 'base64url').toString('utf8');
+
+function safeEqual(a, b) {
+  const x = Buffer.from(String(a));
+  const y = Buffer.from(String(b));
+  return x.length === y.length && crypto.timingSafeEqual(x, y);
+}
+
+/** Link de avaliação por e-mail: vale para um morador num ciclo. */
+function avaliacaoToken(actor, cicloKey) {
+  const body = `${actor}.${cicloKey}`;
+  return b64u(`${body}.${hmac(`aval|${body}`).slice(0, 22)}`);
+}
+function readAvaliacaoToken(token) {
+  const [actor, key, sig] = unb64u(token).split('.');
+  if (!actor || !ciclo.isCycleKey(key) || !sig) return null;
+  if (!safeEqual(sig, hmac(`aval|${actor}.${key}`).slice(0, 22))) return null;
+  const nome = feedLib.canonicalResident(actor);
+  return nome ? { actor: nome, ciclo: key } : null;
+}
+
+let publicBase = String(PUBLIC_URL || '').replace(/\/$/, '') || 'https://tocah-do-coelho-app.onrender.com';
+function rememberBase(req) {
+  if (PUBLIC_URL || !req) return;
+  const host = req.headers['x-forwarded-host'] || req.headers.host;
+  if (!host || /localhost|127\.0\.0\.1/.test(host)) return;
+  const proto = String(req.headers['x-forwarded-proto'] || 'https').split(',')[0];
+  publicBase = `${proto}://${host}`;
+}
+const linkAvaliacao = (actor, key) => `${publicBase}/avaliar?t=${avaliacaoToken(actor, key)}`;
+
+const pinHash = (pin) => crypto.createHash('sha256').update(`pin:${appSecret()}:${String(pin).trim()}`).digest('hex');
+
+function adminToken() {
+  const exp = Date.now() + 120 * 24 * 60 * 60 * 1000;
+  const body = `${ADMIN_MORADOR}.${exp}`;
+  return b64u(`${body}.${hmac(`admin|${body}`)}`);
+}
+
+async function requireAdmin(body) {
+  const [who, exp, sig] = unb64u(body.adminToken).split('.');
+  if (who !== ADMIN_MORADOR || !sig || Number(exp) < Date.now() || !safeEqual(sig, hmac(`admin|${who}.${exp}`))) {
+    throw httpError(401, 'Entre de novo na Administração (PIN).', { code: 'ADMIN_AUTH' });
+  }
+  return ADMIN_MORADOR;
+}
+
+async function adminLog(acao, detalhe) {
+  await ensureSheetExists(ADMIN_LOG_SHEET, ['quando', 'acao', 'quem', 'detalhe']);
+  await appendRow(`${ADMIN_LOG_SHEET}!A:D`, [new Date().toISOString(), acao, ADMIN_MORADOR, detalhe]);
+}
+
+async function setConfigValues(pairs) {
+  await ensureSheetExists(CONFIG_SHEET, ['chave', 'valor']);
+  const rows = await readRangeOrEmpty(`${CONFIG_SHEET}!A:B`, { fresh: true });
+  const updates = [];
+  const appends = [];
+  Object.entries(pairs).forEach(([k, v]) => {
+    const idx = rows.findIndex((r) => getCell(r, 0) === k);
+    if (idx >= 0) updates.push({ row: idx + 1, col: 1, value: String(v) });
+    else appends.push([k, String(v)]);
+  });
+  if (updates.length) await writeCells(CONFIG_SHEET, updates);
+  if (appends.length) await appendRows(`${CONFIG_SHEET}!A:B`, appends);
+  bump('config', 'avaliacao');
+}
 const CICLOS_ESCALA_HEADER = ['ciclo', 'morador', 'tarefa', 'extra', 'atualizadoEm'];
 
 function feedItemCycle(item) {
@@ -545,12 +634,13 @@ async function avaliacaoContext({ fresh = false } = {}) {
   const inicio = ciclo.isCycleKey(config.avaliacaoInicio) ? config.avaliacaoInicio : '2026-W46';
   const titles = await getSpreadsheetTitles();
   const read = async (sheet, range) => (titles.includes(sheet) ? readRangeOrEmpty(`${sheet}!${range}`, { fresh }) : []);
-  const [feed, ratingRows, ciclosRows, desempenhoRows, avisosRows] = await Promise.all([
+  const [feed, ratingRows, ciclosRows, desempenhoRows, avisosRows, ajustesRows] = await Promise.all([
     readFeed({ fresh }),
     read(RATINGS_SHEET, 'A:H'),
     read(CICLOS_ESCALA_SHEET, 'A:E'),
     read(DESEMPENHO_SHEET, 'A:L'),
     read(AVISOS_SHEET, 'A:F'),
+    read(AJUSTES_SHEET, 'A:I'),
   ]);
   return {
     config,
@@ -561,6 +651,7 @@ async function avaliacaoContext({ fresh = false } = {}) {
     ciclosEscala: ciclo.parseCiclosEscala(ciclosRows),
     desempenho: ciclo.parseDesempenhoRows(desempenhoRows),
     avisos: avisosRows.slice(1).map((r) => ({ id: getCell(r, 0), tipo: getCell(r, 1), ciclo: getCell(r, 2) })),
+    ajustes: ciclo.parseAjustes(ajustesRows),
   };
 }
 
@@ -590,7 +681,7 @@ async function cycleState(ctx, key, now = Date.now()) {
   const escala = await escalaDoCiclo(ctx, key, isCurrent);
   const checks = ciclo.checksByCycle(ctx.feed, key, feedItemCycle);
   const closedRecord = ctx.desempenho.some((r) => r.ciclo === key);
-  const state = ciclo.buildCycleState({ key, now, escala, checks, ratingRows: ctx.ratingRows, rules: ctx.rules, closedRecord });
+  const state = ciclo.buildCycleState({ key, now, escala, checks, ratingRows: ctx.ratingRows, rules: ctx.rules, closedRecord, ajustes: ctx.ajustes });
   // Fotos extras da entrega (linhas "check_photo" apontando para o check principal).
   state.residents.forEach((r) => {
     if (!r.checkTs) return;
@@ -643,7 +734,8 @@ async function processarCiclos({ force = false } = {}) {
       if (state.phase === 'entregas') continue;
       const entregas = state.residents.map((r) => ({ nome: r.nome, tarefa: r.tarefa, extra: r.extra, status: r.status, atrasoDias: r.atrasoDias, checkTs: r.checkTs || '' }));
       if (!haveAviso('avaliacao_aberta', key) && state.residents.some((r) => r.status === 'entregue')) {
-        events.push({ tipo: 'avaliacao_aberta', ciclo: key, payload: { periodo: state.periodo, fechamento: state.fechamento, entregas } });
+        const links = Object.fromEntries(RESIDENTS.map((n) => [n, linkAvaliacao(n, key)]));
+        events.push({ tipo: 'avaliacao_aberta', ciclo: key, payload: { periodo: state.periodo, fechamento: state.fechamento, entregas, links } });
       }
       if (state.phase === 'avaliacao') {
         const lembrarEm = Date.parse(state.fechamento) - 30 * 60 * 60 * 1000;
@@ -662,7 +754,7 @@ async function processarCiclos({ force = false } = {}) {
       const multas = results.filter((r) => r.multa > 0);
       if (multas.length) {
         await ensureSheetExists(MULTAS_SHEET, MULTAS_HEADER);
-        await appendRows(`${MULTAS_SHEET}!A:E`, multas.map((r) => [key, r.nome, r.multa, r.motivo, fechadoEm]));
+        await appendRows(`${MULTAS_SHEET}!A:G`, multas.map((r) => [key, r.nome, r.multa, r.motivo, fechadoEm, 'LANÇADA', '']));
         await appendRows('Caixinha!A:D', multas.map((r) => [spDateBr(), `Multa tarefa · ${r.nome} · semana ${state.periodo}`, r.multa, `automática • ${r.motivo}`]));
         bump('caixinha');
       }
@@ -692,6 +784,36 @@ async function processarCiclos({ force = false } = {}) {
     processing = null;
   });
   return processing;
+}
+
+/** Grava uma nota (app ou página do e-mail). Mesma regra para os dois. */
+async function registrarAvaliacao(body, { origem = 'app' } = {}) {
+  const actor = feedLib.canonicalResident(body.actor);
+  const target = feedLib.canonicalResident(body.target);
+  const score = Number(body.nota);
+  const categoria = String(body.categoria || 'casa').trim().toLowerCase() === 'banheirao' ? 'banheirao' : 'casa';
+  const comentario = String(body.comentario || '').trim().slice(0, 400);
+  if (!actor || !target || !Number.isInteger(score) || score < 1 || score > 5) throw httpError(400, 'Dados de avaliação inválidos.');
+  if (actor === target) throw httpError(400, 'Não dá para avaliar a própria tarefa.');
+  const ctx = await avaliacaoContext({ fresh: true });
+  const key = ciclo.isCycleKey(body.ciclo) ? body.ciclo : '';
+  if (!key) throw httpError(400, 'Semana inválida.');
+  const state = await cycleState(ctx, key);
+  if (state.phase !== 'avaliacao') throw httpError(400, state.phase === 'encerrada' ? 'A avaliação dessa semana já fechou.' : 'A avaliação ainda não abriu.', { code: 'NOT_OPEN' });
+  const alvo = state.residents.find((r) => r.nome === target);
+  if (!alvo || alvo.status !== 'entregue') throw httpError(400, 'Esse morador não entregou a tarefa.');
+  if (categoria === 'banheirao' && !alvo.banheirao) throw httpError(400, 'Esse morador não estava no banheirão.');
+  if (categoria === 'banheirao' && !ciclo.podeAvaliarBanheirao(actor, ctx.rules)) throw httpError(403, 'O banheirão só é avaliado por quem entra no rodízio dele.', { code: 'NOT_IN_GROUP' });
+  const already = ciclo.ratedMap(state._rows, actor)[target]?.[categoria];
+  if (already) throw httpError(409, 'Você já avaliou essa entrega.', { code: 'ALREADY_RATED' });
+  const ts = new Date().toISOString();
+  const tarefa = categoria === 'banheirao' ? 'Banheirão' : alvo.tarefa;
+  await ensureSheetExists(RATINGS_SHEET, ['week', 'actor', 'target', 'nota', 'tarefa', 'comentario', 'ts', 'categoria']);
+  await appendRow(`${RATINGS_SHEET}!A:H`, [key, actor, target, score, tarefa, comentario, ts, categoria]);
+  bump('ratings', 'avaliacao');
+  lastProcessAt = 0;
+  setTimeout(() => processarCiclos().catch(() => {}), 50);
+  return { ok: true, message: 'Avaliação registrada.', ciclo: key, origem };
 }
 
 async function avaliacaoSnapshot(usuario = '') {
@@ -818,6 +940,52 @@ const getActions = {
   async getAvaliacaoSemana({ usuario = '' }) {
     processarCiclos().catch((e) => console.warn('[avaliacao] processar falhou:', e?.message || e));
     return avaliacaoSnapshot(usuario);
+  },
+
+  /** A administração já tem PIN? (sem expor nada) */
+  async adminStatus() {
+    const config = await readConfig();
+    return { ok: true, admin: ADMIN_MORADOR, temPin: !!(ADMIN_PIN || config.adminPinHash), pinPorAmbiente: !!ADMIN_PIN };
+  },
+
+  /** Painel do admin: semanas com ajustes, multas, regras e registro. */
+  async adminPainel(query) {
+    await requireAdmin(query);
+    const ctx = await avaliacaoContext({ fresh: true });
+    const now = Date.now();
+    const atualKey = ciclo.currentCycleKey(new Date(now));
+    const keys = [ciclo.shiftCycleKey(atualKey, -1), atualKey, ciclo.shiftCycleKey(atualKey, 1)];
+    const semanas = [];
+    for (const key of keys) {
+      if (key < ctx.inicio && key !== atualKey) continue;
+      const st = await cycleState(ctx, key, now);
+      const { _rows, ...rest } = st;
+      semanas.push({ ...rest, futura: key > atualKey });
+    }
+    const titles = await getSpreadsheetTitles();
+    const multasRows = titles.includes(MULTAS_SHEET) ? (await readRangeOrEmpty(`${MULTAS_SHEET}!A:G`, { fresh: true })).slice(1) : [];
+    const logRows = titles.includes(ADMIN_LOG_SHEET) ? (await readRangeOrEmpty(`${ADMIN_LOG_SHEET}!A:D`, { fresh: true })).slice(1) : [];
+    return {
+      ok: true,
+      agora: new Date(now).toISOString(),
+      semanas,
+      ajustes: ctx.ajustes.filter((a) => keys.includes(a.ciclo)).sort((a, b) => (a.em < b.em ? 1 : -1)),
+      multas: multasRows
+        .map((r, i) => ({ row: i + 2, ciclo: getCell(r, 0), nome: getCell(r, 1), valor: toNumberLike(getCell(r, 2)) || 0, motivo: getCell(r, 3), lancadoEm: getCell(r, 4), status: getCell(r, 5) || 'LANÇADA', obs: getCell(r, 6) }))
+        .filter((m) => m.ciclo && m.nome)
+        .reverse(),
+      regras: {
+        avaliacaoInicio: ctx.inicio,
+        avaliacaoMultaAuto: ctx.rules.multaAuto,
+        avaliacaoMultaValor: ctx.rules.multaValor,
+        avaliacaoMediaMinima: ctx.rules.mediaMinima,
+        avaliacaoMinAvaliacoes: ctx.rules.minAvaliacoes,
+        avaliacaoToleranciaDias: ctx.rules.toleranciaDias - 6,
+        banheiraoGrupo: ctx.rules.banheiraoGrupo.join(','),
+      },
+      log: logRows.slice(-40).reverse().map((r) => ({ quando: getCell(r, 0), acao: getCell(r, 1), detalhe: getCell(r, 3) })),
+      links: Object.fromEntries(RESIDENTS.map((n) => [n, linkAvaliacao(n, keys.find((k) => semanas.some((x) => x.key === k && x.phase === 'avaliacao')) || atualKey)])),
+    };
   },
 
   async getDesempenho() {
@@ -1035,32 +1203,191 @@ const postActions = {
 
   /** Avaliação anônima (1 a 5 + comentário) da entrega de outro morador. */
   async avaliarEntrega(body) {
-    const actor = feedLib.canonicalResident(body.actor);
-    const target = feedLib.canonicalResident(body.target);
-    const score = Number(body.nota);
-    const categoria = String(body.categoria || 'casa').trim().toLowerCase() === 'banheirao' ? 'banheirao' : 'casa';
-    const comentario = String(body.comentario || '').trim().slice(0, 400);
-    if (!actor || !target || !Number.isInteger(score) || score < 1 || score > 5) throw httpError(400, 'Dados de avaliação inválidos.');
-    if (actor === target) throw httpError(400, 'Não dá para avaliar a própria tarefa.');
+    return registrarAvaliacao(body);
+  },
+
+  /** Cria (primeira vez) ou troca o PIN da administração. */
+  async adminDefinirPin(body) {
+    if (feedLib.canonicalResident(body.usuario) !== ADMIN_MORADOR) throw httpError(403, 'Só o Guilherme administra.');
+    if (ADMIN_PIN) throw httpError(400, 'O PIN está definido no servidor (Render).');
+    const novo = String(body.pin || '').trim();
+    if (!/^\d{4,8}$/.test(novo)) throw httpError(400, 'Use um PIN de 4 a 8 números.');
+    const config = await readConfig();
+    if (config.adminPinHash && !safeEqual(pinHash(body.pinAtual || ''), config.adminPinHash)) throw httpError(403, 'PIN atual errado.', { code: 'BAD_PIN' });
+    await setConfigValues({ adminPinHash: pinHash(novo) });
+    await adminLog('definir PIN', config.adminPinHash ? 'PIN trocado' : 'PIN criado');
+    return { ok: true, adminToken: adminToken() };
+  },
+
+  async adminEntrar(body) {
+    if (feedLib.canonicalResident(body.usuario) !== ADMIN_MORADOR) throw httpError(403, 'Só o Guilherme administra.');
+    const pin = String(body.pin || '').trim();
+    const config = await readConfig();
+    const ok = ADMIN_PIN ? safeEqual(pin, ADMIN_PIN) : config.adminPinHash && safeEqual(pinHash(pin), config.adminPinHash);
+    if (!ok) {
+      await new Promise((r) => setTimeout(r, 800));
+      throw httpError(403, 'PIN errado.', { code: 'BAD_PIN' });
+    }
+    return { ok: true, adminToken: adminToken() };
+  },
+
+  /** Ajuste manual: prazo, tolerância, fechamento, dispensa, abono, tarefa, abrir/fechar avaliação. */
+  async adminAjuste(body) {
+    await requireAdmin(body);
+    const key = String(body.ciclo || '');
+    const tipo = String(body.tipo || '').toLowerCase();
+    const morador = body.morador === '*' ? '*' : feedLib.canonicalResident(body.morador);
+    if (!ciclo.isCycleKey(key)) throw httpError(400, 'Semana inválida.');
+    if (!ciclo.AJUSTE_TIPOS.includes(tipo)) throw httpError(400, 'Tipo de ajuste inválido.');
+    if (!morador) throw httpError(400, 'Morador inválido.');
+    let valor = String(body.valor ?? '').trim();
+    if (['prazo', 'tolerancia', 'fechamento'].includes(tipo)) {
+      const t = Date.parse(valor);
+      if (!Number.isFinite(t)) throw httpError(400, 'Data inválida.');
+      valor = new Date(t).toISOString();
+    }
+    if (tipo === 'tarefa' && !valor) throw httpError(400, 'Escreva a tarefa.');
+    if (['dispensa', 'abono', 'abrir_avaliacao', 'fechar_avaliacao'].includes(tipo)) valor = '1';
+    if (['fechamento', 'abrir_avaliacao', 'fechar_avaliacao'].includes(tipo) && morador !== '*') throw httpError(400, 'Esse ajuste vale para a casa toda.');
     const ctx = await avaliacaoContext({ fresh: true });
-    const key = ciclo.isCycleKey(body.ciclo) ? body.ciclo : '';
-    if (!key) throw httpError(400, 'Semana inválida.');
-    const state = await cycleState(ctx, key);
-    if (state.phase !== 'avaliacao') throw httpError(400, state.phase === 'encerrada' ? 'A avaliação dessa semana já fechou.' : 'A avaliação ainda não abriu.', { code: 'NOT_OPEN' });
-    const alvo = state.residents.find((r) => r.nome === target);
-    if (!alvo || alvo.status !== 'entregue') throw httpError(400, 'Esse morador não entregou a tarefa.');
-    if (categoria === 'banheirao' && !alvo.banheirao) throw httpError(400, 'Esse morador não estava no banheirão.');
-    if (categoria === 'banheirao' && !ciclo.podeAvaliarBanheirao(actor, ctx.rules)) throw httpError(403, 'O banheirão só é avaliado por quem entra no rodízio dele.', { code: 'NOT_IN_GROUP' });
-    const already = ciclo.ratedMap(state._rows, actor)[target]?.[categoria];
-    if (already) throw httpError(409, 'Você já avaliou essa entrega.', { code: 'ALREADY_RATED' });
-    const ts = new Date().toISOString();
-    const tarefa = categoria === 'banheirao' ? 'Banheirão' : alvo.tarefa;
-    await ensureSheetExists(RATINGS_SHEET, ['week', 'actor', 'target', 'nota', 'tarefa', 'comentario', 'ts', 'categoria']);
-    await appendRow(`${RATINGS_SHEET}!A:H`, [key, actor, target, score, tarefa, comentario, ts, categoria]);
-    bump('ratings', 'avaliacao');
+    if (ctx.desempenho.some((r) => r.ciclo === key)) throw httpError(400, 'Essa semana já foi encerrada. Para corrigir multa use "Retirar multa".', { code: 'CLOSED' });
+    const em = new Date().toISOString();
+    const id = `aj_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const motivo = String(body.motivo || '').trim().slice(0, 200);
+    await ensureSheetExists(AJUSTES_SHEET, ciclo.AJUSTES_HEADER);
+    await appendRow(`${AJUSTES_SHEET}!A:I`, [id, key, morador, tipo, valor, motivo, ADMIN_MORADOR, em, 'SIM']);
+    const nomeTipo = { prazo: 'mudar prazo', tolerancia: 'mudar tolerância', fechamento: 'mudar fechamento', dispensa: 'dispensar', abono: 'abonar atraso', tarefa: 'trocar tarefa', abrir_avaliacao: 'abrir avaliação', fechar_avaliacao: 'fechar avaliação' }[tipo];
+    const valorTxt = ['prazo', 'tolerancia', 'fechamento'].includes(tipo) ? quandoBR(valor) : tipo === 'tarefa' ? valor : '';
+    await adminLog(nomeTipo, `semana ${ciclo.cycleInfo(key).periodo} · ${morador === '*' ? 'casa toda' : morador}${valorTxt ? ` · ${valorTxt}` : ''}${motivo ? ` · ${motivo}` : ''}`);
+    bump('avaliacao', 'feed');
     lastProcessAt = 0;
     setTimeout(() => processarCiclos().catch(() => {}), 50);
-    return { ok: true, message: 'Avaliação registrada.', ciclo: key };
+    return { ok: true, id, message: 'Ajuste salvo.' };
+  },
+
+  async adminDesfazerAjuste(body) {
+    await requireAdmin(body);
+    const id = String(body.id || '').trim();
+    const rows = await readRangeOrEmpty(`${AJUSTES_SHEET}!A:I`, { fresh: true });
+    const idx = rows.findIndex((r) => getCell(r, 0) === id);
+    if (idx < 0) throw httpError(404, 'Ajuste não encontrado.');
+    await writeCells(AJUSTES_SHEET, [{ row: idx + 1, col: 8, value: 'NÃO' }]);
+    await adminLog('desfazer ajuste', `${id} (${getCell(rows[idx], 3)} · ${getCell(rows[idx], 2)})`);
+    bump('avaliacao');
+    return { ok: true, message: 'Ajuste desfeito.' };
+  },
+
+  /** Apaga uma entrega (foto errada etc.) para a pessoa poder mandar de novo. */
+  async adminApagarEntrega(body) {
+    await requireAdmin(body);
+    const key = String(body.ciclo || '');
+    const nome = feedLib.canonicalResident(body.morador);
+    if (!ciclo.isCycleKey(key) || !nome) throw httpError(400, 'Dados inválidos.');
+    const ctx = await avaliacaoContext({ fresh: true });
+    if (ctx.desempenho.some((r) => r.ciclo === key)) throw httpError(400, 'Essa semana já foi encerrada.', { code: 'CLOSED' });
+    const check = ciclo.checksByCycle(ctx.feed, key, feedItemCycle)[nome];
+    if (!check) throw httpError(404, 'Não tem entrega dessa pessoa nessa semana.');
+    const alvos = ctx.feed.filter((x) => x.ts === check.ts || (x.type === 'check_photo' && x.target === check.ts));
+    await writeCells(TASK_FEED_SHEET, alvos.map((x) => ({ row: x.rowIndex, col: 2, value: 'deleted' })));
+    await adminLog('apagar entrega', `${key} · ${nome} · ${String(body.motivo || '').trim()}`);
+    bump('feed', 'avaliacao', 'escala');
+    return { ok: true, message: 'Entrega apagada. A pessoa já pode mandar de novo.' };
+  },
+
+  /** Retira uma multa lançada errada: estorno na Caixinha + desempenho corrigido. */
+  async adminRetirarMulta(body) {
+    await requireAdmin(body);
+    const key = String(body.ciclo || '');
+    const nome = feedLib.canonicalResident(body.morador);
+    const motivo = String(body.motivo || '').trim().slice(0, 200) || 'retirada pelo admin';
+    const rows = await readRangeOrEmpty(`${MULTAS_SHEET}!A:G`, { fresh: true });
+    const idx = rows.findIndex((r, i) => i > 0 && getCell(r, 0) === key && norm(getCell(r, 1)) === norm(nome) && norm(getCell(r, 5) || 'LANCADA') !== 'RETIRADA');
+    if (idx < 0) throw httpError(404, 'Multa não encontrada (ou já retirada).');
+    const valor = toNumberLike(getCell(rows[idx], 2)) || 0;
+    await writeCells(MULTAS_SHEET, [
+      { row: idx + 1, col: 5, value: 'RETIRADA' },
+      { row: idx + 1, col: 6, value: `${motivo} • ${spDateBr()}` },
+    ]);
+    const info = ciclo.cycleInfo(key);
+    await appendRow('Caixinha!A:D', [spDateBr(), `Estorno multa tarefa · ${nome} · semana ${info.periodo}`, -Math.abs(valor), `retirada por ${ADMIN_MORADOR} • ${motivo}`]);
+    const des = await readRangeOrEmpty(`${DESEMPENHO_SHEET}!A:L`, { fresh: true });
+    const dIdx = des.findIndex((r) => getCell(r, 0) === key && norm(getCell(r, 1)) === norm(nome));
+    if (dIdx >= 0) {
+      await writeCells(DESEMPENHO_SHEET, [
+        { row: dIdx + 1, col: 9, value: '0' },
+        { row: dIdx + 1, col: 10, value: `multa retirada: ${motivo}` },
+      ]);
+    }
+    await adminLog('retirar multa', `${key} · ${nome} · R$ ${valor} · ${motivo}`);
+    bump('caixinha', 'avaliacao');
+    return { ok: true, message: `Multa retirada e R$ ${valor} estornado na Caixinha.` };
+  },
+
+  /** Multa manual (ex.: combinado em reunião). */
+  async adminLancarMulta(body) {
+    await requireAdmin(body);
+    const key = ciclo.isCycleKey(body.ciclo) ? body.ciclo : ciclo.currentCycleKey();
+    const nome = feedLib.canonicalResident(body.morador);
+    const valor = Math.abs(toNumberLike(body.valor));
+    const motivo = String(body.motivo || '').trim().slice(0, 200);
+    if (!nome || !valor || !motivo) throw httpError(400, 'Morador, valor e motivo são obrigatórios.');
+    await ensureSheetExists(MULTAS_SHEET, MULTAS_HEADER);
+    await appendRow(`${MULTAS_SHEET}!A:G`, [key, nome, valor, motivo, new Date().toISOString(), 'LANÇADA', 'manual']);
+    await appendRow('Caixinha!A:D', [spDateBr(), `Multa tarefa · ${nome} · semana ${ciclo.cycleInfo(key).periodo}`, valor, `manual • ${motivo}`]);
+    await adminLog('lançar multa', `${key} · ${nome} · R$ ${valor} · ${motivo}`);
+    bump('caixinha', 'avaliacao');
+    return { ok: true, message: 'Multa lançada na Caixinha.' };
+  },
+
+  async adminRegras(body) {
+    await requireAdmin(body);
+    const r = body.regras || {};
+    const out = {};
+    if (r.avaliacaoMultaAuto !== undefined) out.avaliacaoMultaAuto = r.avaliacaoMultaAuto ? 'sim' : 'não';
+    if (r.avaliacaoMultaValor !== undefined) {
+      const v = toNumberLike(r.avaliacaoMultaValor);
+      if (!Number.isFinite(v) || v < 0) throw httpError(400, 'Valor da multa inválido.');
+      out.avaliacaoMultaValor = String(v);
+    }
+    if (r.avaliacaoMediaMinima !== undefined) {
+      const v = toNumberLike(r.avaliacaoMediaMinima);
+      if (!Number.isFinite(v) || v < 0 || v > 5) throw httpError(400, 'Média mínima de 0 a 5.');
+      out.avaliacaoMediaMinima = String(v);
+    }
+    if (r.avaliacaoMinAvaliacoes !== undefined) out.avaliacaoMinAvaliacoes = String(Math.max(1, Math.round(toNumberLike(r.avaliacaoMinAvaliacoes) || 1)));
+    if (r.avaliacaoToleranciaDias !== undefined) out.avaliacaoToleranciaDias = String(Math.max(0, Math.min(6, Math.round(toNumberLike(r.avaliacaoToleranciaDias) || 0))));
+    if (r.banheiraoGrupo !== undefined) {
+      const lista = String(r.banheiraoGrupo).split(/[,;]/).map((x) => feedLib.canonicalResident(x)).filter(Boolean);
+      if (!lista.length) throw httpError(400, 'Escolha pelo menos uma pessoa para o banheirão.');
+      out.banheiraoGrupo = lista.join(',');
+    }
+    if (r.avaliacaoInicio !== undefined) {
+      if (!ciclo.isCycleKey(r.avaliacaoInicio)) throw httpError(400, 'Semana de início inválida.');
+      out.avaliacaoInicio = r.avaliacaoInicio;
+    }
+    if (!Object.keys(out).length) throw httpError(400, 'Nada para salvar.');
+    await setConfigValues(out);
+    await adminLog('regras', Object.entries(out).map(([k, v]) => `${k}=${v}`).join(' · '));
+    lastProcessAt = 0;
+    return { ok: true, message: 'Regras salvas.' };
+  },
+
+  /** Cobrança manual por e-mail (sai no próximo ciclo do Apps Script, em até 1 hora). */
+  async adminCobrar(body) {
+    await requireAdmin(body);
+    const ctx = await avaliacaoContext({ fresh: true });
+    const key = ciclo.isCycleKey(body.ciclo) ? body.ciclo : ciclo.currentCycleKey();
+    const st = await cycleState(ctx, key);
+    const tipo = body.tipo === 'avaliacao' ? 'avaliacao' : 'entrega';
+    const pendentes = tipo === 'avaliacao'
+      ? Object.entries(st.avaliacoes.porAvaliador).filter(([, v]) => v.total > v.feitas).map(([nome, v]) => ({ nome, faltam: v.total - v.feitas, link: linkAvaliacao(nome, key) }))
+      : st.residents.filter((r) => r.status === 'no_prazo' || r.status === 'atrasada').map((r) => ({ nome: r.nome, tarefa: r.tarefa, status: r.status, atrasoDias: r.atrasoDias, prazo: r.prazo, tolerancia: r.tolerancia }));
+    if (!pendentes.length) return { ok: true, enviados: 0, message: 'Ninguém pendente.' };
+    await ensureSheetExists(AVISOS_SHEET, AVISOS_HEADER);
+    const id = `cobranca_manual:${key}:${Date.now()}`;
+    await appendRow(`${AVISOS_SHEET}!A:F`, [id, 'cobranca_manual', key, new Date().toISOString(), '', JSON.stringify({ tipo, periodo: st.periodo, fechamento: st.fechamento, pendentes })]);
+    await adminLog('cobrar', `${tipo} · ${key} · ${pendentes.map((p) => p.nome).join(', ')}`);
+    return { ok: true, enviados: pendentes.length, pendentes: pendentes.map((p) => p.nome), message: `Cobrança agendada para ${pendentes.length} pessoa(s) — sai em até 1 hora.` };
   },
 
   /** O Apps Script marca os avisos que já mandou por e-mail. */
@@ -1610,12 +1937,195 @@ app.get('/health', async (_, res) => {
   }
 });
 
+/* ======================================================================
+ * Página de avaliação aberta pelo e-mail (sem app, sem login: link assinado)
+ * ==================================================================== */
+
+const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const nomeCurto = (n) => String(n || '').charAt(0) + String(n || '').slice(1).toLowerCase();
+function quandoBR(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const wd = d.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo', weekday: 'short' }).replace('.', '');
+  const dm = d.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit' });
+  const hm = d.toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' }).replace(':', 'h');
+  return `${wd} ${dm}, ${hm}`;
+}
+
+function estrelasHtml(nome, sel) {
+  let out = '<div class="stars" role="radiogroup">';
+  for (let n = 5; n >= 1; n -= 1) {
+    const id = `${nome}-${n}`;
+    out += `<input type="radio" id="${esc(id)}" name="${esc(nome)}" value="${n}"${Number(sel) === n ? ' checked' : ''} required><label for="${esc(id)}" title="${n} estrela${n > 1 ? 's' : ''}">★</label>`;
+  }
+  return `${out}</div>`;
+}
+
+function paginaAvaliacao({ token, actor, state, rules, msg = '', erro = '', alvoSel = '', notaSel = 0 }) {
+  const rated = ciclo.ratedMap(state._rows, actor);
+  const prog = state.avaliacoes.porAvaliador[actor] || { total: 0, feitas: 0 };
+  const alvos = state.residents.filter((r) => r.status === 'entregue' && r.nome !== actor);
+  const podeBan = ciclo.podeAvaliarBanheirao(actor, rules);
+  const fotos = (r) => (r.fotos && r.fotos.length ? r.fotos : r.hasPhoto ? [r.checkTs] : []);
+  const aberto = state.phase === 'avaliacao';
+  const cards = alvos.map((r) => {
+    const feito = rated[r.nome] || {};
+    const precisaBan = r.banheirao && podeBan;
+    const completo = feito.casa && (!precisaBan || feito.banheirao);
+    const imgs = fotos(r).map((ts, i) => `<img src="/avaliar/foto?t=${esc(token)}&amp;ts=${encodeURIComponent(ts)}" alt="Foto ${i + 1} da tarefa de ${esc(nomeCurto(r.nome))}" loading="lazy">`).join('');
+    const atraso = r.atrasoDias ? `<span class="pill warn">Entregue +${r.atrasoDias} dia${r.atrasoDias > 1 ? 's' : ''}</span>` : '<span class="pill ok">No prazo</span>';
+    const destaque = alvoSel === r.nome && !completo ? ' destaque' : '';
+    let corpo;
+    if (completo) corpo = '<div class="done">✅ Você já avaliou (vale pelo app e pelo e-mail)</div>';
+    else if (!aberto) corpo = '<div class="muted">A avaliação não está aberta.</div>';
+    else {
+      corpo = `<form method="post" action="/avaliar#${esc(r.nome)}">
+        <input type="hidden" name="t" value="${esc(token)}"><input type="hidden" name="alvo" value="${esc(r.nome)}">
+        ${!feito.casa ? `<div class="lbl">${precisaBan ? 'Tarefa' : 'Sua nota'}</div>${estrelasHtml('nota_casa', alvoSel === r.nome ? notaSel : 0)}` : '<div class="muted">Nota da tarefa já dada ✅</div>'}
+        ${precisaBan && !feito.banheirao ? `<div class="lbl">Banheirão</div>${estrelasHtml('nota_banheirao', 0)}` : ''}
+        ${!feito.casa ? '<textarea name="comentario" maxlength="400" placeholder="Comentário (opcional, anônimo)"></textarea>' : ''}
+        <button type="submit">Enviar avaliação</button>
+      </form>`;
+    }
+    return `<section class="card${destaque}" id="${esc(r.nome)}">
+      <div class="row"><div class="av">${esc(r.nome.charAt(0))}</div><div class="grow"><div class="ov">${esc(r.nome)}</div><div class="tt">${esc(r.tarefa)}${r.extra ? ' + Banheirão' : ''}</div></div>${atraso}</div>
+      <div class="fotos">${imgs || '<div class="muted">Sem foto</div>'}</div>
+      <div class="muted small">Entregue ${esc(quandoBR(r.entregueEm))}${fotos(r).length > 1 ? ` · ${fotos(r).length} fotos` : ''}</div>
+      ${corpo}
+    </section>`;
+  }).join('');
+  const faltaram = state.residents.filter((r) => r.status !== 'entregue' && r.nome !== actor);
+  const titulo = state.phase === 'encerrada' ? 'Avaliação encerrada' : state.phase === 'entregas' ? 'Avaliação ainda não abriu' : prog.feitas >= prog.total ? 'Você avaliou todo mundo 🎉' : `Faltam ${prog.total - prog.feitas} de ${prog.total} notas`;
+  return `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex">
+<title>Avaliação da semana · Tocah</title><style>
+:root{--bg:#F6F4FA;--sf:#fff;--alt:#F3EFF8;--tx:#1C1A26;--mu:#625D75;--su:#8F8AA3;--bd:#E7E2EF;--p:#6A1B9A;--ps:#F2E7F9;--ops:#55137E;--ok:#E4F4EA;--oko:#14663A;--wa:#FCF0DA;--wao:#7A4700;--da:#FBE6E8;--dao:#951E28;--star:#F5A524}
+@media (prefers-color-scheme:dark){:root{--bg:#110F17;--sf:#1B1924;--alt:#23202E;--tx:#F3F0FA;--mu:#B3ADC4;--su:#827C96;--bd:#2D2939;--p:#C894EA;--ps:#2E2140;--ops:#E6CFF6;--ok:#17301F;--oko:#9BE6BA;--wa:#352813;--wao:#F8D49C;--da:#3A1A20;--dao:#FFB3BA}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;font-weight:600}
+.wrap{max-width:560px;margin:0 auto;padding:16px 14px 40px}
+.hero{border-radius:26px;padding:20px;color:#fff;background:linear-gradient(135deg,#6A1B9A,#4A148C)}
+.ov{font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--su)}.hero .ov{color:rgba(255,255,255,.78)}
+h1{margin:4px 0 6px;font-size:22px;font-weight:900}.hero p{margin:0;font-size:14px;line-height:1.5;opacity:.92}
+.bar{height:8px;border-radius:99px;background:rgba(255,255,255,.25);margin-top:12px;overflow:hidden}.bar div{height:100%;background:#fff}
+.msg{margin:12px 0 0;padding:12px 14px;border-radius:16px;font-size:14px}.msg.ok{background:var(--ok);color:var(--oko)}.msg.err{background:var(--da);color:var(--dao)}
+.card{background:var(--sf);border:1px solid var(--bd);border-radius:22px;padding:16px;margin-top:12px}.card.destaque{border:2px solid var(--p)}
+.row{display:flex;align-items:center;gap:12px}.grow{flex:1;min-width:0}.tt{font-size:17px;font-weight:900}
+.av{width:44px;height:44px;border-radius:50%;background:var(--ps);color:var(--ops);display:flex;align-items:center;justify-content:center;font-weight:900;font-size:18px;flex:none}
+.pill{padding:5px 10px;border-radius:99px;font-size:11px;font-weight:800;white-space:nowrap}.pill.ok{background:var(--ok);color:var(--oko)}.pill.warn{background:var(--wa);color:var(--wao)}
+.fotos{display:flex;gap:8px;overflow-x:auto;margin-top:12px;scroll-snap-type:x mandatory}.fotos img{width:100%;max-width:100%;flex:none;border-radius:16px;aspect-ratio:4/3;object-fit:cover;background:var(--alt);scroll-snap-align:start}
+.fotos img+img{width:85%}
+.muted{color:var(--mu);font-size:14px}.small{font-size:12px;margin-top:6px}
+.lbl{margin-top:14px;text-align:center;font-size:12px;font-weight:800;color:var(--mu)}
+.stars{display:flex;flex-direction:row-reverse;justify-content:center;gap:4px}.stars input{position:absolute;opacity:0;width:1px;height:1px}
+.stars label{font-size:40px;line-height:1;color:var(--bd);cursor:pointer;padding:2px 4px;min-width:44px;text-align:center}
+.stars input:checked~label,.stars label:hover,.stars label:hover~label{color:var(--star)}.stars input:focus-visible+label{outline:2px solid var(--p);border-radius:8px}
+textarea{width:100%;margin-top:10px;min-height:70px;border-radius:14px;border:1px solid var(--bd);background:var(--alt);color:var(--tx);padding:10px 12px;font:inherit;font-size:16px}
+button{width:100%;margin-top:10px;min-height:48px;border:0;border-radius:16px;background:var(--p);color:#fff;font:inherit;font-weight:900;font-size:15px;cursor:pointer}
+@media (prefers-color-scheme:dark){button{color:#1D0F29}}
+.done{margin-top:12px;padding:12px;border-radius:14px;background:var(--ok);color:var(--oko);font-weight:800;text-align:center}
+.foot{margin-top:18px;text-align:center;font-size:12px;color:var(--su)}a{color:var(--p);font-weight:800}
+</style></head><body><div class="wrap">
+<div class="hero"><div class="ov">Avaliação da semana ${esc(state.periodo)}</div><h1>${esc(titulo)}</h1>
+<p>Oi, ${esc(nomeCurto(actor))}! Notas de 1 a 5, anônimas. ${state.phase === 'avaliacao' ? `Fecha ${esc(quandoBR(state.fechamento))} (ou antes, se todos avaliarem).` : ''} Tudo que você der aqui aparece no app na hora.</p>
+<div class="bar"><div style="width:${prog.total ? Math.round((prog.feitas / prog.total) * 100) : 100}%"></div></div></div>
+${msg ? `<div class="msg ok" role="status">${esc(msg)}</div>` : ''}${erro ? `<div class="msg err" role="alert">${esc(erro)}</div>` : ''}
+${cards || '<section class="card"><div class="muted">Ninguém para avaliar ainda.</div></section>'}
+${faltaram.length ? `<section class="card"><div class="ov">Sem avaliação</div><div class="muted" style="margin-top:6px">${faltaram.map((r) => `${esc(nomeCurto(r.nome))} (${r.status === 'dispensado' ? 'dispensado' : 'não entregou'})`).join(', ')}</div></section>` : ''}
+<div class="foot">🐰 República Tocah do Coelho · <a href="https://guidelluca.github.io/tocah-do-coelho-app/">abrir o app</a><br>A página se atualiza sozinha se você avaliar pelo app.</div>
+</div>
+<script>
+(function(){var t=${JSON.stringify(token)},last=null;
+function tick(){if(document.activeElement&&/TEXTAREA|INPUT/.test(document.activeElement.tagName))return;
+fetch('/avaliar/estado?t='+encodeURIComponent(t)).then(function(r){return r.json()}).then(function(j){var k=j.phase+'|'+j.feitas+'|'+j.total;if(last&&k!==last)location.replace(location.pathname+'?t='+encodeURIComponent(t));last=k;}).catch(function(){});}
+tick();setInterval(tick,15000);
+var a=document.querySelector('.card.destaque');if(a)a.scrollIntoView({block:'center'});})();
+</script></body></html>`;
+}
+
+async function carregarParaPagina(token) {
+  const tk = readAvaliacaoToken(token);
+  if (!tk) throw httpError(403, 'Link inválido ou incompleto. Abra pelo e-mail mais recente ou pelo app.');
+  const ctx = await avaliacaoContext({ fresh: true });
+  const state = await cycleState(ctx, tk.ciclo);
+  return { ...tk, state, rules: ctx.rules };
+}
+
+function paginaErro(res, status, texto) {
+  res.status(status).set('Content-Type', 'text/html; charset=utf-8').send(`<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Tocah</title></head>
+<body style="margin:0;background:#F6F4FA;font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;font-weight:600;color:#1C1A26"><div style="max-width:520px;margin:40px auto;padding:0 16px">
+<div style="border-radius:26px;padding:22px;color:#fff;background:linear-gradient(135deg,#6A1B9A,#4A148C)"><div style="font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;opacity:.8">Tocah</div>
+<div style="font-size:20px;font-weight:900;margin-top:4px">${esc(texto)}</div></div>
+<p style="text-align:center"><a style="color:#6A1B9A;font-weight:800" href="https://guidelluca.github.io/tocah-do-coelho-app/">Abrir o app</a></p></div></body></html>`);
+}
+
+app.get('/avaliar', async (req, res) => {
+  rememberBase(req);
+  try {
+    const d = await carregarParaPagina(String(req.query.t || ''));
+    const alvoSel = feedLib.canonicalResident(req.query.alvo) || '';
+    const notaSel = Math.max(0, Math.min(5, Number(req.query.nota) || 0));
+    res.set('Cache-Control', 'no-store').set('Content-Type', 'text/html; charset=utf-8');
+    res.send(paginaAvaliacao({ token: String(req.query.t), actor: d.actor, state: d.state, rules: d.rules, msg: req.query.ok ? `Nota de ${nomeCurto(req.query.ok)} enviada ✅` : '', erro: String(req.query.erro || ''), alvoSel, notaSel }));
+  } catch (error) {
+    paginaErro(res, error.status || 500, error.message || 'Não deu para abrir a avaliação.');
+  }
+});
+
+app.post('/avaliar', async (req, res) => {
+  const token = String(req.body?.t || '');
+  const tk = readAvaliacaoToken(token);
+  if (!tk) return paginaErro(res, 403, 'Link inválido.');
+  const alvo = feedLib.canonicalResident(req.body?.alvo);
+  const back = (q) => res.redirect(303, `/avaliar?t=${encodeURIComponent(token)}&${q}#${alvo || ''}`);
+  try {
+    const notas = [['casa', req.body?.nota_casa], ['banheirao', req.body?.nota_banheirao]].filter(([, v]) => v !== undefined && v !== '');
+    if (!notas.length) return back(`erro=${encodeURIComponent('Escolha as estrelas antes de enviar.')}`);
+    for (const [categoria, nota] of notas) {
+      try {
+        await withWriteLock(() => registrarAvaliacao({ actor: tk.actor, target: alvo, ciclo: tk.ciclo, nota: Number(nota), categoria, comentario: categoria === 'casa' ? req.body?.comentario : '' }, { origem: 'email' }));
+      } catch (e) {
+        if (e?.extra?.code !== 'ALREADY_RATED') throw e;
+      }
+    }
+    return back(`ok=${encodeURIComponent(alvo)}`);
+  } catch (error) {
+    return back(`erro=${encodeURIComponent(error.message || 'Não deu para salvar.')}`);
+  }
+});
+
+app.get('/avaliar/estado', async (req, res) => {
+  try {
+    const d = await carregarParaPagina(String(req.query.t || ''));
+    const prog = d.state.avaliacoes.porAvaliador[d.actor] || { total: 0, feitas: 0 };
+    res.set('Cache-Control', 'no-store').json({ ok: true, phase: d.state.phase, ...prog, casa: d.state.avaliacoes });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.get('/avaliar/foto', async (req, res) => {
+  try {
+    const tk = readAvaliacaoToken(String(req.query.t || ''));
+    if (!tk) throw httpError(403, 'Link inválido.');
+    const ts = String(req.query.ts || '');
+    const items = await readFeed();
+    const item = items.find((x) => x.ts === ts && (x.type === 'check' || x.type === 'check_photo'));
+    if (!item || !item.photoDataUrl || feedItemCycle(item) !== tk.ciclo) throw httpError(404, 'Foto não encontrada.');
+    const [h] = await hydratePhotos([item]);
+    const m = String(h.photoDataUrl || '').match(/^data:(image\/[a-z+]+);base64,(.+)$/i);
+    if (!m) throw httpError(404, 'Foto não encontrada.');
+    res.set('Content-Type', m[1]).set('Cache-Control', 'private, max-age=86400').send(Buffer.from(m[2], 'base64'));
+  } catch (error) {
+    res.status(error.status || 500).end();
+  }
+});
+
 app.get('/api', async (req, res) => {
   const action = String(req.query?.action || '');
   try {
     if (!action) throw httpError(400, 'action obrigatória');
     const handler = getActions[action];
     if (!handler) throw httpError(400, `action GET não suportada: ${action}`);
+    rememberBase(req);
     const body = await handler(req.query || {});
     if (action === 'getFeedPhoto' && body?.photoDataUrl) res.set('Cache-Control', 'public, max-age=86400');
     else res.set('Cache-Control', 'no-store');

@@ -296,6 +296,13 @@ export const entregarTarefa = ({ usuario, ciclo = '', photos = [] }) =>
   postAction('entregarTarefa', { usuario, ciclo, photos, photoDataUrl: photos[0] || '' }, { timeoutMs: 60000 });
 export const avaliarEntrega = ({ actor, target, ciclo, nota, comentario = '', categoria = 'casa' }) =>
   postAction('avaliarEntrega', { actor, target, ciclo, nota, comentario, categoria });
+
+// Administração (só Guilherme, com PIN)
+export const adminStatus = () => getAction('adminStatus', {}, { cache: false });
+export const adminPainel = (adminToken) => getAction('adminPainel', { adminToken }, { cache: false, timeoutMs: 45000 });
+export const adminDefinirPin = ({ usuario, pin, pinAtual = '' }) => postAction('adminDefinirPin', { usuario, pin, pinAtual });
+export const adminEntrar = ({ usuario, pin }) => postAction('adminEntrar', { usuario, pin });
+export const adminAcao = (action, data) => postAction(action, data);
 export const addTaskFeedComment = ({ actor, content, target = '', tarefa = '', photoDataUrl = '', parentTs = '', parentActor = '' }) =>
   postAction('addTaskFeedComment', { actor, content, target, tarefa, photoDataUrl, parentTs, parentActor }, { timeoutMs: 45000 });
 export const deleteTaskFeedPost = ({ ts, requester }) => postAction('deleteTaskFeedPost', { ts, requester });

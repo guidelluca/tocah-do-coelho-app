@@ -5,7 +5,7 @@ import { Screen } from '../components/Screen';
 import { RentDetailSheet } from '../components/RentDetailSheet';
 import { CaixinhaSheet } from '../components/CaixinhaSheet';
 import { MyTaskCard } from '../components/MyTaskCard';
-import { AvaliacaoBanner } from '../components/tasks';
+import { AvaliacaoBanner, DestaqueSemanaCard } from '../components/tasks';
 import { RemoteImage, HOUSE_SOURCES } from '../components/RemoteImage';
 import { AppText, Avatar, BottomSheet, Card, Divider, Icon, IconButton, ListRow, MoneyText, PressableScale, SectionHeader, SkeletonCard, StatusPill } from '../components/ui';
 import { useResident } from '../context/ResidentContext';
@@ -105,6 +105,7 @@ export function HomeScreen() {
 
       {/* SUA TAREFA */}
       <AvaliacaoBanner onPress={() => navigation.navigate('Tarefas', { tab: 'avaliar', at: Date.now() })} />
+      <DestaqueSemanaCard onPress={() => navigation.navigate('Tarefas', { tab: 'desempenho', at: Date.now() })} />
       <MyTaskCard />
 
       {/* CAIXINHA (faixa verde, como antes) */}

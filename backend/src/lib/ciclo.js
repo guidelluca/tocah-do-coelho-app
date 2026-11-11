@@ -162,27 +162,87 @@ function lateDays(ts, deadline) {
  * @param {object} p.rules
  * @param {boolean} p.closedRecord já existe fechamento gravado na aba Desempenho
  */
-function buildCycleState({ key, now = Date.now(), escala = [], checks = {}, ratingRows = [], rules = DEFAULT_RULES, closedRecord = false }) {
+/* ---------- ajustes manuais do admin (aba AjustesTarefas) ---------- */
+
+const AJUSTES_HEADER = ['id', 'ciclo', 'morador', 'tipo', 'valor', 'motivo', 'por', 'em', 'ativo'];
+const AJUSTE_TIPOS = ['prazo', 'tolerancia', 'fechamento', 'dispensa', 'abono', 'tarefa', 'abrir_avaliacao', 'fechar_avaliacao'];
+
+function parseAjustes(rows = []) {
+  return rows
+    .filter((r, i) => !(i === 0 && norm(r[0]) === 'ID'))
+    .map((r) => ({
+      id: String(r[0] || '').trim(),
+      ciclo: String(r[1] || '').trim(),
+      morador: String(r[2] || '').trim().toUpperCase() || '*',
+      tipo: String(r[3] || '').trim().toLowerCase(),
+      valor: String(r[4] ?? '').trim(),
+      motivo: String(r[5] || '').trim(),
+      por: String(r[6] || '').trim(),
+      em: String(r[7] || '').trim(),
+      ativo: norm(r[8] || 'SIM') !== 'NAO',
+    }))
+    .filter((a) => a.id && isCycleKey(a.ciclo) && AJUSTE_TIPOS.includes(a.tipo));
+}
+
+/** Ajuste vigente: o mais recente ativo para o morador (ou "*" = todos). */
+function makeAjusteGetter(ajustes = [], key) {
+  const doCiclo = ajustes.filter((a) => a.ciclo === key && a.ativo).sort((a, b) => (a.em < b.em ? -1 : 1));
+  return (morador, tipo) => {
+    const nome = String(morador || '*').toUpperCase();
+    let found = null;
+    for (const a of doCiclo) if (a.tipo === tipo && (a.morador === nome || a.morador === '*')) {
+      if (!found || a.morador === nome || found.morador === '*') found = a;
+    }
+    // individual vence o geral
+    const indiv = doCiclo.filter((a) => a.tipo === tipo && a.morador === nome).pop();
+    return indiv || found;
+  };
+}
+
+function buildCycleState({ key, now = Date.now(), escala = [], checks = {}, ratingRows = [], rules = DEFAULT_RULES, closedRecord = false, ajustes = [] }) {
   const info = cycleInfo(key, rules);
+  const aj = makeAjusteGetter(ajustes, key);
+  const isoMs = (a) => (a && Number.isFinite(Date.parse(a.valor)) ? Date.parse(a.valor) : null);
+  const geralFechamento = isoMs(aj('*', 'fechamento'));
   const residents = escala.map((e) => {
     const nome = String(e.nome || '').toUpperCase();
     const check = checks[nome];
-    const deadline = deadlineFor(e.tarefa, info);
-    const base = { nome, tarefa: e.tarefa || '', extra: e.extra || '', banheirao: hasBanheirao(e), prazo: new Date(deadline).toISOString() };
-    if (check) {
-      const atrasoDias = lateDays(check.ts, deadline);
-      return { ...base, status: 'entregue', entregueEm: check.ts, atrasoDias, checkTs: check.ts, hasPhoto: !!check.photoDataUrl };
-    }
-    if (now > info.tolerancia) return { ...base, status: 'nao_entregue', atrasoDias: lateDays(info.tolerancia, deadline) };
-    if (now > deadline) return { ...base, status: 'atrasada', atrasoDias: lateDays(now, deadline) };
+    const tarefaAj = aj(nome, 'tarefa');
+    const tarefa = tarefaAj ? tarefaAj.valor : e.tarefa || '';
+    const deadline = isoMs(aj(nome, 'prazo')) ?? deadlineFor(tarefa, info);
+    const tolerancia = Math.max(deadline, isoMs(aj(nome, 'tolerancia')) ?? info.tolerancia);
+    const abono = aj(nome, 'abono');
+    const dispensa = aj(nome, 'dispensa');
+    const base = {
+      nome,
+      tarefa,
+      extra: e.extra || '',
+      banheirao: hasBanheirao({ ...e, tarefa }),
+      prazo: new Date(deadline).toISOString(),
+      tolerancia: new Date(tolerancia).toISOString(),
+      ajustado: !!(tarefaAj || aj(nome, 'prazo') || aj(nome, 'tolerancia') || abono || dispensa),
+      abonado: !!abono,
+    };
+    const atraso = (t) => (abono ? 0 : lateDays(t, deadline));
+    if (check) return { ...base, status: 'entregue', entregueEm: check.ts, atrasoDias: atraso(check.ts), checkTs: check.ts, hasPhoto: !!check.photoDataUrl };
+    if (dispensa) return { ...base, status: 'dispensado', motivoDispensa: dispensa.motivo, atrasoDias: 0 };
+    if (now > tolerancia) return { ...base, status: 'nao_entregue', atrasoDias: atraso(tolerancia) };
+    if (now > deadline) return { ...base, status: 'atrasada', atrasoDias: atraso(now) };
     return { ...base, status: 'no_prazo', atrasoDias: 0 };
   });
 
+  const ativos = residents.filter((r) => r.status !== 'dispensado');
   const delivered = residents.filter((r) => r.status === 'entregue');
-  const allDelivered = residents.length > 0 && delivered.length === residents.length;
+  const allDelivered = ativos.length > 0 && ativos.every((r) => r.status === 'entregue');
   const lastDelivery = delivered.reduce((max, r) => Math.max(max, Date.parse(r.entregueEm) || 0), 0);
-  const opened = allDelivered || now > info.tolerancia;
-  const abertaEm = opened ? new Date(allDelivered ? Math.min(lastDelivery, info.tolerancia) : info.tolerancia).toISOString() : '';
+  const fimTolerancia = ativos.reduce((max, r) => Math.max(max, Date.parse(r.tolerancia)), info.tolerancia);
+  const abrirManual = aj('*', 'abrir_avaliacao');
+  const opened = allDelivered || now > fimTolerancia || !!abrirManual;
+  const abertaEm = opened
+    ? new Date(abrirManual && !allDelivered && now <= fimTolerancia ? Date.parse(abrirManual.em) || now : allDelivered ? Math.min(lastDelivery, fimTolerancia) : fimTolerancia).toISOString()
+    : '';
+  const fechamento = Math.max(geralFechamento ?? info.fechamento, opened ? Date.parse(abertaEm) : 0);
+  const fecharManual = aj('*', 'fechar_avaliacao');
 
   // Avaliações esperadas: cada morador avalia todos os outros que entregaram (casa + banheirão quando tem).
   const rows = ratingRows.filter((r) => String(r[0] || '').trim() === key);
@@ -200,7 +260,7 @@ function buildCycleState({ key, now = Date.now(), escala = [], checks = {}, rati
 
   let phase = 'entregas';
   if (opened) phase = 'avaliacao';
-  if (closedRecord || (opened && (now > info.fechamento || allRated || (delivered.length === 0 && now > info.tolerancia)))) phase = 'encerrada';
+  if (closedRecord || (opened && (now > fechamento || allRated || !!fecharManual || (delivered.length === 0 && now > fimTolerancia)))) phase = 'encerrada';
 
   const porAvaliador = {};
   residents.forEach((r) => {
@@ -214,10 +274,11 @@ function buildCycleState({ key, now = Date.now(), escala = [], checks = {}, rati
   return {
     key,
     periodo: info.periodo,
+    inicio: new Date(info.inicio).toISOString(),
     prazo: new Date(info.prazo).toISOString(),
     prazoLavanderia: new Date(info.prazoLavanderia).toISOString(),
-    tolerancia: new Date(info.tolerancia).toISOString(),
-    fechamento: new Date(info.fechamento).toISOString(),
+    tolerancia: new Date(fimTolerancia).toISOString(),
+    fechamento: new Date(fechamento).toISOString(),
     phase,
     abertaEm,
     allDelivered,
@@ -255,9 +316,10 @@ function cycleResults(state, rules = DEFAULT_RULES) {
       .filter(Number.isFinite);
     const comentarios = mine.map((x) => String(x[5] || '').trim()).filter(Boolean);
     const entregou = r.status === 'entregue';
+    const dispensado = r.status === 'dispensado';
     const media = casa.length ? Math.round(avg(casa) * 100) / 100 : null;
     const motivos = [];
-    if (rules.multaAuto && rules.multaValor > 0) {
+    if (rules.multaAuto && rules.multaValor > 0 && !dispensado) {
       if (!entregou) motivos.push('não entregou a tarefa até o fim da tolerância');
       else if (media !== null && casa.length >= rules.minAvaliacoes && media < rules.mediaMinima) {
         motivos.push(`média ${media.toFixed(1).replace('.', ',')} abaixo de ${String(rules.mediaMinima).replace('.', ',')}`);
@@ -268,6 +330,7 @@ function cycleResults(state, rules = DEFAULT_RULES) {
       nome: r.nome,
       tarefa: r.tarefa + (r.extra ? ` + ${r.extra}` : ''),
       entregou,
+      dispensado,
       entregueEm: r.entregueEm || '',
       atrasoDias: r.atrasoDias || 0,
       media,
@@ -286,7 +349,7 @@ const DESEMPENHO_HEADER = ['ciclo', 'morador', 'tarefa', 'entregou', 'entregueEm
 
 function resultToRow(r, fechadoEm) {
   const n = (v) => (v === null || v === undefined ? '' : String(v).replace('.', ','));
-  return [r.ciclo, r.nome, r.tarefa, r.entregou ? 'SIM' : 'NÃO', r.entregueEm, r.atrasoDias, n(r.media), r.nAvaliacoes, n(r.mediaBanheirao), r.multa ? String(r.multa) : '0', r.motivo, fechadoEm];
+  return [r.ciclo, r.nome, r.tarefa, r.dispensado ? 'DISPENSADO' : r.entregou ? 'SIM' : 'NÃO', r.entregueEm, r.atrasoDias, n(r.media), r.nAvaliacoes, n(r.mediaBanheirao), r.multa ? String(r.multa) : '0', r.motivo, fechadoEm];
 }
 
 function parseDesempenhoRows(rows = []) {
@@ -304,6 +367,7 @@ function parseDesempenhoRows(rows = []) {
       nome: String(r[1]).trim().toUpperCase(),
       tarefa: String(r[2] || ''),
       entregou: norm(r[3]) === 'SIM',
+      dispensado: norm(r[3]) === 'DISPENSADO',
       entregueEm: String(r[4] || ''),
       atrasoDias: num(r[5]) || 0,
       media: num(r[6]),
@@ -326,7 +390,7 @@ function computeDesempenho(records = [], residents = [], janela = 8) {
   const pessoas = residents.length ? residents.map((n) => String(n).toUpperCase()) : Array.from(new Set(records.map((r) => r.nome)));
 
   const stats = pessoas.map((nome) => {
-    const all = records.filter((r) => r.nome === nome).sort((a, b) => sortCyclesDesc(a.ciclo, b.ciclo));
+    const all = records.filter((r) => r.nome === nome && !r.dispensado).sort((a, b) => sortCyclesDesc(a.ciclo, b.ciclo));
     const rec = all.filter((r) => recentes.has(r.ciclo));
     const entregas = rec.filter((r) => r.entregou);
     const noPrazo = entregas.filter((r) => !r.atrasoDias);
@@ -406,6 +470,10 @@ function checksByCycle(feedItems = [], key, fallbackWeekOf) {
 module.exports = {
   DEFAULT_RULES,
   DESEMPENHO_HEADER,
+  AJUSTES_HEADER,
+  AJUSTE_TIPOS,
+  parseAjustes,
+  makeAjusteGetter,
   rulesFromConfig,
   addDays,
   endOfDay,

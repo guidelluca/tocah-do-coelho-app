@@ -116,3 +116,38 @@ test('escala por ciclo e entregas por ciclo', () => {
   const fb = () => '2026-W45';
   assert.deepEqual(Object.keys(c.checksByCycle(feed, '2026-W45', fb)).sort(), ['ALLAN', 'RAMON']);
 });
+
+test('ajustes do admin: prazo, tolerância, dispensa, abono, tarefa e fechar', () => {
+  const key = '2026-W46';
+  const aj = (morador, tipo, valor, em = '2026-11-14T10:00:00Z') => [`${tipo}-${morador}-${em}`, key, morador, tipo, valor, 'teste', 'GUILHERME', em, 'SIM'];
+  const ajustes = c.parseAjustes([c.AJUSTES_HEADER,
+    aj('VITOR', 'prazo', '2026-11-17T23:59:00-03:00'),
+    aj('GUSTAVO', 'dispensa', '1'),
+    aj('RAMON', 'abono', '1'),
+    aj('ALLAN', 'tarefa', 'Garagem'),
+    aj('*', 'tolerancia', '2026-11-19T23:59:00-03:00'),
+  ]);
+  const checks = { RAMON: { ts: '2026-11-17T10:00:00-03:00' }, GUILHERME: { ts: '2026-11-15T10:00:00-03:00' } };
+  const s = c.buildCycleState({ key, now: at('2026-11-17T12:00:00-03:00'), escala, checks, ajustes });
+  const by = Object.fromEntries(s.residents.map((r) => [r.nome, r]));
+  assert.equal(by.VITOR.status, 'no_prazo');
+  assert.equal(by.GUSTAVO.status, 'dispensado');
+  assert.equal(by.RAMON.atrasoDias, 0);
+  assert.equal(by.ALLAN.tarefa, 'Garagem');
+  assert.equal(by.ALLAN.status, 'atrasada');
+  assert.equal(new Date(by.ALLAN.tolerancia).toISOString(), '2026-11-20T02:59:00.000Z');
+  // quarta passou mas a tolerância geral foi pra quinta: ainda não abre
+  const s2 = c.buildCycleState({ key, now: at('2026-11-19T12:00:00-03:00'), escala, checks, ajustes });
+  assert.equal(s2.phase, 'entregas');
+  const s3 = c.buildCycleState({ key, now: at('2026-11-20T01:00:00-03:00'), escala, checks, ajustes });
+  assert.equal(s3.phase, 'avaliacao');
+  const res = c.cycleResults(s3, c.rulesFromConfig({}));
+  assert.equal(res.find((r) => r.nome === 'GUSTAVO').multa, 0);
+  assert.equal(res.find((r) => r.nome === 'ALLAN').multa, 60);
+  const fechar = c.parseAjustes([aj('*', 'fechar_avaliacao', '1', '2026-11-20T10:00:00Z')]);
+  assert.equal(c.buildCycleState({ key, now: at('2026-11-20T11:00:00-03:00'), escala, checks, ajustes: [...ajustes, ...fechar] }).phase, 'encerrada');
+  const abrir = c.parseAjustes([aj('*', 'abrir_avaliacao', '1', '2026-11-16T10:00:00Z')]);
+  assert.equal(c.buildCycleState({ key, now: at('2026-11-16T11:00:00-03:00'), escala, checks, ajustes: abrir }).phase, 'avaliacao');
+  const rows = c.parseDesempenhoRows([c.resultToRow(res.find((r) => r.nome === 'GUSTAVO'), 'x')]);
+  assert.equal(rows[0].dispensado, true);
+});
