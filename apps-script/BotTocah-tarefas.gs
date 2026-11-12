@@ -3,13 +3,29 @@
  * E-mails e painéis no visual do app · escala publicada no app (aba EscalaApp)
  * Lembretes pulam quem já marcou a tarefa no app (aba TarefasFeed)
  *
- * Se este projeto estiver no mesmo Apps Script que BotTocah-gastos-aluguel.gs, unifique onOpen()
- * em um único menu (não deixe duas funções onOpen).
+ * MENU "Bot Tarefas": este arquivo NÃO tem onOpen() de propósito, para não brigar com o onOpen()
+ * do Bot Tocah (gastos/aluguel) no mesmo projeto. Na 1ª vez, no editor do Apps Script, escolha a
+ * função  instalarMenuBotTarefas  na lista lá em cima e clique em Executar. Depois o menu aparece
+ * sozinho toda vez que a planilha abrir (gatilho "Ao abrir").
  */
 
 const LOGO_URL = 'https://lh3.googleusercontent.com/d/1K-KUlO4ZNy5TFz1YIsVh__uxICixnkBS';
 
-function onOpen() {
+/** Roda uma vez pelo editor: liga o gatilho "Ao abrir" que cria o menu Bot Tarefas. */
+function instalarMenuBotTarefas() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === 'abrirMenuBotTarefas') ScriptApp.deleteTrigger(t);
+  });
+  ScriptApp.newTrigger('abrirMenuBotTarefas').forSpreadsheet(ss).onOpen().create();
+  try {
+    abrirMenuBotTarefas();
+    ss.toast('Menu Bot Tarefas instalado. Ele aparece sempre que a planilha abrir.', 'Bot Tarefas', 8);
+  } catch (e) {}
+}
+
+/** Cria o menu Bot Tarefas (chamado pelo gatilho "Ao abrir"). */
+function abrirMenuBotTarefas() {
   try {
     atualizarAbaPainelMes();
   } catch (e) {}
@@ -19,7 +35,7 @@ function onOpen() {
   var escala = ui.createMenu('Escala da semana (e-mail)')
       .addItem('Enviar para todos', 'rodizioTarefasTocah')
       .addSeparator();
-  getListaMoradores().forEach(function (m) {
+  (function () { try { return getListaMoradores(); } catch (e) { return []; } })().forEach(function (m) {
     escala.addItem('Enviar só para ' + m.nome, 'enviarIndividual_' + m.nome.replace(/\s/g, ''));
   });
 
@@ -73,8 +89,6 @@ function onOpen() {
       .addItem('Atualizar escala no app agora', 'publicarEscalaParaAppComAviso')
       .addItem('Abrir o app da casa', 'abrirAppDaCasa')
       .addToUi();
-
-  mostrarSidebarTarefas();
 }
 
 function mostrarSidebarTarefas() {
@@ -1868,6 +1882,9 @@ function ligarTudoAutomatico() {
   ScriptApp.newTrigger('tickAvaliacaoTocah').timeBased().everyMinutes(10).create();
   ScriptApp.newTrigger('publicarEscalaParaApp').timeBased().onWeekDay(ScriptApp.WeekDay.MONDAY).atHour(1).inTimezone(tz).create();
   ScriptApp.newTrigger('publicarEscalaParaApp').timeBased().everyDays(1).atHour(7).inTimezone(tz).create();
+  if (!ScriptApp.getProjectTriggers().some(function (t) { return t.getHandlerFunction() === 'abrirMenuBotTarefas'; })) {
+    ScriptApp.newTrigger('abrirMenuBotTarefas').forSpreadsheet(SpreadsheetApp.getActiveSpreadsheet()).onOpen().create();
+  }
   // O lembrete de domingo fica de fora: a cobrança automática já avisa domingo 9h, 18h e 22h.
   try { publicarEscalaParaApp(); } catch (e) {}
   try { tickAvaliacaoTocah(); } catch (e) {}
