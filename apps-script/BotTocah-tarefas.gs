@@ -1708,7 +1708,7 @@ function tickAvaliacaoTocah() {
       return;
     }
     try {
-      enviarAviso_(aviso);
+      enviarAviso_(aviso, estado);
       aba.getRange(i + 2, 5).setValue(new Date().toISOString());
       registrarLog('Aviso de avaliação', aviso.id + ' enviado');
     } catch (e) {
@@ -1717,7 +1717,23 @@ function tickAvaliacaoTocah() {
   });
 }
 
-function enviarAviso_(aviso) {
+/**
+ * Quantas notas ainda faltam para cada morador no ciclo, lido do app NA HORA.
+ * Devolve null se o app não respondeu (aí não dá pra saber quem já avaliou).
+ */
+function faltamAvaliar_(estado, cicloKey) {
+  if (!estado) return null;
+  var c = [estado.anterior, estado.atual].filter(function (x) { return x && x.key === cicloKey; })[0];
+  if (!c || !c.avaliacoes || !c.avaliacoes.porAvaliador) return null;
+  var out = {};
+  Object.keys(c.avaliacoes.porAvaliador).forEach(function (nome) {
+    var v = c.avaliacoes.porAvaliador[nome];
+    out[normNome_(nome)] = Math.max(0, (v.total || 0) - (v.feitas || 0));
+  });
+  return out;
+}
+
+function enviarAviso_(aviso, estado) {
   var p = aviso.payload || {};
   if (aviso.tipo === 'avaliacao_aberta') {
     var fotos = fotosDasEntregas_(aviso.ciclo);
@@ -1731,7 +1747,14 @@ function enviarAviso_(aviso) {
         if (b) blobs[n] = b;
       }
     });
+    var faltamAberta = faltamAvaliar_(estado || estadoAvaliacaoDoApp_(), aviso.ciclo);
+    var pulados = [];
     getListaMoradores().forEach(function (m) {
+      // Quem já deu todas as notas (o app abre na hora; o e-mail sai minutos depois) não recebe.
+      if (faltamAberta && faltamAberta[normNome_(m.nome)] === 0) {
+        pulados.push(nomeCurto_(m.nome));
+        return;
+      }
       var cids = {};
       var inline = {};
       Object.keys(blobs).forEach(function (n) {
@@ -1746,13 +1769,25 @@ function enviarAviso_(aviso) {
         inlineImages: inline,
       });
     });
+    if (pulados.length) registrarLog('Avaliação aberta', 'Não enviado (já avaliaram tudo): ' + pulados.join(', '));
   } else if (aviso.tipo === 'cobranca_manual') {
+    // A cobrança foi pedida no app, mas sai minutos depois: confere de novo quem ainda deve.
+    var faltamAgora = p.tipo === 'avaliacao' ? faltamAvaliar_(estado || estadoAvaliacaoDoApp_(), aviso.ciclo) : null;
+    var entregaAgora = p.tipo === 'avaliacao' ? null : (estado || null);
+    var ignorados = [];
     (p.pendentes || []).forEach(function (x) {
       var email = emailDe_(x.nome);
       if (!email) return;
       if (p.tipo === 'avaliacao') {
+        if (faltamAgora) {
+          var f = faltamAgora[normNome_(x.nome)];
+          if (f === 0) { ignorados.push(nomeCurto_(x.nome)); return; }
+          if (typeof f === 'number') x.faltam = f;
+        }
         enviarEmail_({ to: email, subject: '📣 O Guilherme pediu: faltam ' + x.faltam + ' notas suas · Tocah', htmlBody: htmlLembreteAvaliacao_(x.nome, x.faltam, { ciclo: aviso.ciclo, payload: { periodo: p.periodo, fechamento: p.fechamento, link: x.link } }) });
       } else {
+        var rAgora = entregaAgora ? residenteDoCiclo_(entregaAgora, aviso.ciclo, x.nome) : null;
+        if (rAgora && (rAgora.status === 'entregue' || rAgora.status === 'dispensado')) { ignorados.push(nomeCurto_(x.nome)); return; }
         var a = getAtribuicoesSemana(0).filter(function (q) { return normNome_(q.morador.nome) === normNome_(x.nome); })[0] ||
           { morador: { nome: x.nome, email: email }, tarefa: { area: x.tarefa, freq: '', desc: '' } };
         a.tarefa.area = x.tarefa || a.tarefa.area;
@@ -1762,6 +1797,7 @@ function enviarAviso_(aviso) {
         enviarEmail_({ to: email, subject: '📣 Cobrança da casa: ' + mail.assunto, htmlBody: mail.html });
       }
     });
+    if (ignorados.length) registrarLog('Cobrança do admin', 'Não enviado (já ' + (p.tipo === 'avaliacao' ? 'avaliaram' : 'entregaram') + '): ' + ignorados.join(', '));
   } else if (aviso.tipo === 'lembrete_avaliacao') {
     // coberto pelo lembrete diário das 19h (cobrancaAvaliacaoTocah_)
   } else if (aviso.tipo === 'multa_confirmada') {
@@ -1992,6 +2028,13 @@ function salvarStatusApps_(extra) {
     }
     aba.appendRow(['statusAppsScript', json]);
   } catch (e) {}
+}
+
+function residenteDoCiclo_(estado, chave, nome) {
+  if (!estado) return null;
+  var c = [estado.anterior, estado.atual].filter(function (x) { return x && x.key === chave; })[0];
+  if (!c) return null;
+  return (c.residents || []).filter(function (r) { return normNome_(r.nome) === normNome_(nome); })[0] || null;
 }
 
 function estadoResidente_(estado, offset, nome) {
