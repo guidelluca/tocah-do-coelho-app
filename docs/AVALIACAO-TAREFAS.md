@@ -32,7 +32,7 @@
 ## Publicar
 1. Merge do branch `avaliacao-semanal` na `main` (o GitHub Pages publica sozinho).
 2. Render → Environment → adicionar `ADMIN_PIN` (4 a 8 números) → **Manual Deploy → Deploy latest commit**.
-3. Apps Script das tarefas: colar `apps-script/BotTocah-tarefas.gs`, salvar, recarregar a planilha e clicar em **⭐ Ligar avisos da avaliação**.
+3. Apps Script das tarefas: colar `apps-script/BotTocah-tarefas.gs`, salvar, recarregar a planilha e clicar em **Bot Tarefas → Ligar tudo automático**.
 4. Admin → Segurança: conferir o Diagnóstico.
 
 ## Limites conhecidos (modelo gratuito)

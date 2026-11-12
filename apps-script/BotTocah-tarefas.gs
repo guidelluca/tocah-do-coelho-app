@@ -15,47 +15,63 @@ function onOpen() {
   } catch (e) {}
 
   var ui = SpreadsheetApp.getUi();
-  var menu = ui.createMenu('🚀 Envio das Tarefas Semanais');
 
-  menu
-      .addItem('📋 Abrir Painel de Ferramentas (Sidebar)', 'mostrarSidebarTarefas')
-      .addItem('📅 VISUALIZAR ESCALA DO MÊS', 'mostrarPainelPrevisao')
-      .addItem('✅ Status da semana (quem já marcou no app)', 'mostrarStatusDaSemana')
-      .addItem('🔔 Plano de notificações', 'mostrarPainelNotificacoes')
-      .addItem('📱 Abrir o app da casa', 'abrirAppDaCasa')
-      .addSeparator()
-      .addItem('📢 Enviar para TODOS (Email Único)', 'rodizioTarefasTocah')
+  var escala = ui.createMenu('Escala da semana (e-mail)')
+      .addItem('Enviar para todos', 'rodizioTarefasTocah')
       .addSeparator();
-
-  const moradores = getListaMoradores();
-  moradores.forEach(function (m) {
-    menu.addItem('Enviar apenas para: ' + m.nome, 'enviarIndividual_' + m.nome.replace(/\s/g, ''));
+  getListaMoradores().forEach(function (m) {
+    escala.addItem('Enviar só para ' + m.nome, 'enviarIndividual_' + m.nome.replace(/\s/g, ''));
   });
 
-  menu
+  var banheirao = ui.createMenu('Banheirão (e-mail)')
+      .addItem('Enviar escala do banheirão', 'rodizioBanheiraoTocah')
+      .addItem('Lembrete do banheirão', 'lembreteBanheiraoTocah');
+
+  var cobrancas = ui.createMenu('Cobranças (e-mail)')
+      .addItem('Lembrete de multa (geral)', 'lembreteUltimoDiaTocah')
+      .addItem('Conferir entregas e avaliação agora', 'tickAvaliacaoTocah');
+
+  var umaAUma = ui.createMenu('Automações uma a uma')
+      .addItem('Ligar escala semanal (seg 8h)', 'configurarEnvioAutomaticoSegunda')
+      .addItem('Desligar escala semanal', 'removerEnvioAutomatico')
       .addSeparator()
-      .addItem('🔄 Pular Rodízio Manualmente (Geral)', 'alertaAvancarRodizio')
-      .addItem('🚿 Pular Rodízio SÓ Banheirão', 'alertaAvancarBanheirao')
+      .addItem('Ligar lembretes diários (8h)', 'configurarEnvioDiario')
+      .addItem('Desligar lembretes diários', 'removerEnvioDiario')
       .addSeparator()
-      .addItem('🚨 Enviar Lembrete de Multa (Geral)', 'lembreteUltimoDiaTocah')
+      .addItem('Ligar cobrança e avaliação (a cada 10 min)', 'instalarGatilhoAvaliacao')
+      .addItem('Desligar cobrança e avaliação', 'removerGatilhoAvaliacao')
       .addSeparator()
-      .addItem('⏰ Ligar envio automático SEMANAL (Seg 8h)', 'configurarEnvioAutomaticoSegunda')
-      .addItem('🚫 Desligar automático SEMANAL', 'removerEnvioAutomatico')
+      .addItem('Ligar atualização da escala no app (seg 1h e todo dia 7h)', 'instalarGatilhoEscalaApp')
+      .addItem('Desligar atualização da escala no app', 'removerGatilhoEscalaApp')
       .addSeparator()
-      .addItem('📅 Ligar lembretes DIÁRIOS (Todo dia 8h)', 'configurarEnvioDiario')
-      .addItem('🚫 Desligar lembretes DIÁRIOS', 'removerEnvioDiario')
+      .addItem('Ligar lembrete de domingo (18h)', 'configurarLembreteDomingo')
+      .addItem('Desligar lembrete de domingo', 'removerLembreteDomingo');
+
+  var paineis = ui.createMenu('Painéis')
+      .addItem('Painel de ferramentas (barra lateral)', 'mostrarSidebarTarefas')
+      .addItem('Escala do mês', 'mostrarPainelPrevisao')
+      .addItem('Status da semana (quem já entregou)', 'mostrarStatusDaSemana')
+      .addItem('Plano de notificações', 'mostrarPainelNotificacoes');
+
+  var rodizio = ui.createMenu('Rodízio')
+      .addItem('Pular rodízio (geral)', 'alertaAvancarRodizio')
+      .addItem('Pular só o banheirão', 'alertaAvancarBanheirao');
+
+  ui.createMenu('Bot Tarefas')
+      .addSubMenu(escala)
+      .addSubMenu(banheirao)
+      .addSubMenu(cobrancas)
       .addSeparator()
-      .addItem('⏰ Ligar lembrete de DOMINGO 18h (só quem falta)', 'configurarLembreteDomingo')
-      .addItem('🚫 Desligar lembrete de domingo', 'removerLembreteDomingo')
+      .addItem('Ligar tudo automático', 'ligarTudoAutomatico')
+      .addItem('Desligar tudo automático', 'desligarTudoAutomatico')
+      .addItem('Ver automações ligadas', 'verAutomacoes')
+      .addSubMenu(umaAUma)
       .addSeparator()
-      .addItem('🚿 Enviar só Banheirão (separado)', 'rodizioBanheiraoTocah')
-      .addItem('🚨 Lembrete Banheirão', 'lembreteBanheiraoTocah')
+      .addSubMenu(paineis)
+      .addSubMenu(rodizio)
       .addSeparator()
-      .addItem('⭐ Ligar avisos da avaliação (e-mails de hora em hora)', 'instalarGatilhoAvaliacao')
-      .addItem('⭐ Conferir avaliação agora', 'tickAvaliacaoTocah')
-      .addSeparator()
-      .addItem('📱 Atualizar escala no app agora', 'publicarEscalaParaAppComAviso')
-      .addItem('📱 Ligar atualização automática do app', 'instalarGatilhoEscalaApp')
+      .addItem('Atualizar escala no app agora', 'publicarEscalaParaAppComAviso')
+      .addItem('Abrir o app da casa', 'abrirAppDaCasa')
       .addToUi();
 
   mostrarSidebarTarefas();
@@ -102,7 +118,7 @@ function getHtmlSidebar() {
       '<button onclick="run(this,\'configurarEnvioDiario\',null,\'Lembretes diários ligados!\')">📅 Ligar lembretes diários (8h)</button>' +
       '<button onclick="run(this,\'configurarLembreteDomingo\',null,\'Lembrete de domingo ligado!\')">🔔 Ligar lembrete de domingo (18h)</button>' +
       '<button onclick="run(this,\'instalarGatilhoEscalaApp\',null,\'Atualização automática do app ligada!\')">📱 Ligar atualização do app</button>' +
-      '<button onclick="run(this,\'instalarGatilhoAvaliacao\',null,\'Avisos da avaliação ligados!\')">⭐ Ligar avisos da avaliação</button>' +
+      '<button onclick="run(this,\'ligarTudoAutomatico\',null,\'Tudo automático ligado!\')">Ligar tudo automático</button>' +
       '<button class="soft" onclick="google.script.run.mostrarPainelNotificacoes()">🔔 Ver plano de notificações</button>' +
       '<div id="status" role="status"></div>' +
       '<script>' +
@@ -1819,6 +1835,74 @@ function instalarGatilhoAvaliacao() {
   try {
     SpreadsheetApp.getUi().alert('✅ Avisos ligados: a cada 10 minutos (das 7h à meia-noite) o script cobra quem não entregou (2 dias antes, véspera, dia do prazo 9h/18h/22h, atraso todo dia e o último dia 18h/22h antes da multa) e quem não avaliou (todo dia 19h). Isso também mantém o app acordado de dia.');
   } catch (e) {}
+}
+
+
+var AUTOMACOES_TOCAH_ = [
+  { fn: 'enviarEscalaAutomaticaSegunda', nome: 'Escala da semana por e-mail', quando: 'segunda 8h' },
+  { fn: 'enviarNotificacoesDiarias', nome: 'Lembretes diários', quando: 'todo dia 8h' },
+  { fn: 'tickAvaliacaoTocah', nome: 'Cobrança de entrega e de avaliação', quando: 'a cada 10 min, das 7h à meia-noite' },
+  { fn: 'publicarEscalaParaApp', nome: 'Escala no app', quando: 'segunda 1h e todo dia 7h' },
+  { fn: 'lembreteDomingoPendentes', nome: 'Lembrete de domingo', quando: 'domingo 18h' },
+];
+
+function apagarGatilhos_(fn) {
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === fn) ScriptApp.deleteTrigger(t);
+  });
+}
+
+function alertaSeguro_(msg) {
+  try {
+    SpreadsheetApp.getUi().alert(msg);
+  } catch (e) {}
+}
+
+/** Liga de uma vez tudo o que precisa rodar sozinho. Pode clicar de novo sem duplicar nada. */
+function ligarTudoAutomatico() {
+  ['enviarEscalaAutomaticaSegunda', 'enviarNotificacoesDiarias', 'tickAvaliacaoTocah', 'publicarEscalaParaApp', 'lembreteDomingoPendentes']
+      .forEach(apagarGatilhos_);
+  var tz = 'America/Sao_Paulo';
+  ScriptApp.newTrigger('enviarEscalaAutomaticaSegunda').timeBased().onWeekDay(ScriptApp.WeekDay.MONDAY).atHour(8).inTimezone(tz).create();
+  ScriptApp.newTrigger('enviarNotificacoesDiarias').timeBased().everyDays(1).atHour(8).inTimezone(tz).create();
+  ScriptApp.newTrigger('tickAvaliacaoTocah').timeBased().everyMinutes(10).create();
+  ScriptApp.newTrigger('publicarEscalaParaApp').timeBased().onWeekDay(ScriptApp.WeekDay.MONDAY).atHour(1).inTimezone(tz).create();
+  ScriptApp.newTrigger('publicarEscalaParaApp').timeBased().everyDays(1).atHour(7).inTimezone(tz).create();
+  // O lembrete de domingo fica de fora: a cobrança automática já avisa domingo 9h, 18h e 22h.
+  try { publicarEscalaParaApp(); } catch (e) {}
+  try { tickAvaliacaoTocah(); } catch (e) {}
+  registrarLog('Automações', 'Tudo ligado');
+  alertaSeguro_('✅ Tudo automático ligado.\n\n' +
+      '• Escala da semana por e-mail: segunda 8h\n' +
+      '• Lembretes diários: todo dia 8h\n' +
+      '• Cobrança de entrega e de avaliação: a cada 10 min (das 7h à meia-noite), só para quem ainda deve\n' +
+      '• Escala no app: segunda 1h e todo dia 7h\n\n' +
+      'Não precisa fazer mais nada: segue rodando toda semana.');
+}
+
+function desligarTudoAutomatico() {
+  AUTOMACOES_TOCAH_.forEach(function (a) { apagarGatilhos_(a.fn); });
+  registrarLog('Automações', 'Tudo desligado');
+  alertaSeguro_('Automações desligadas. Nenhum e-mail sai sozinho até você ligar de novo.');
+}
+
+function verAutomacoes() {
+  var ativos = {};
+  ScriptApp.getProjectTriggers().forEach(function (t) { ativos[t.getHandlerFunction()] = true; });
+  var linhas = AUTOMACOES_TOCAH_.map(function (a) {
+    return (ativos[a.fn] ? '✅ ' : '⛔ ') + a.nome + ' (' + a.quando + ')';
+  });
+  alertaSeguro_('Automações\n\n' + linhas.join('\n'));
+}
+
+function removerGatilhoAvaliacao() {
+  apagarGatilhos_('tickAvaliacaoTocah');
+  alertaSeguro_('Cobrança e avaliação automáticas desligadas.');
+}
+
+function removerGatilhoEscalaApp() {
+  apagarGatilhos_('publicarEscalaParaApp');
+  alertaSeguro_('Atualização automática da escala no app desligada.');
 }
 
 
