@@ -27,12 +27,20 @@ test('parseMonthSheetTitle aceita os formatos usados', () => {
   assert.equal(fin.monthLabel(fin.parseMonthSheetTitle('MAR_2026')), 'Março 2026');
 });
 
-test('AUTO escolhe a aba do mês civil e depois a mais recente', () => {
+test('AUTO escolhe a aba mensal mais recente da planilha, mesmo à frente do mês civil', () => {
   const r = fin.autoFinanceCandidates(['MAI_2026', 'OUT_2026', 'Caixinha'], { year: 2026, month: 11 });
-  assert.equal(r.preferred, null);
-  assert.equal(r.ordered[0], 'OUT_2026');
+  assert.equal(r.preferred, 'OUT_2026');
+  assert.deepEqual(r.ordered, ['OUT_2026', 'MAI_2026']);
   const r2 = fin.autoFinanceCandidates(['MAI_2026', 'NOV_2026'], { year: 2026, month: 11 });
   assert.equal(r2.preferred, 'NOV_2026');
+  const r3 = fin.autoFinanceCandidates(['NOV_2026', 'DEZ_2026', 'OUT_2026'], { year: 2026, month: 11 });
+  assert.equal(r3.preferred, 'DEZ_2026');
+  assert.deepEqual(r3.ordered, ['DEZ_2026', 'NOV_2026', 'OUT_2026']);
+  const r4 = fin.autoFinanceCandidates(['DEZ_2026', 'JAN_2027'], { year: 2026, month: 12 });
+  assert.equal(r4.preferred, 'JAN_2027');
+  const r5 = fin.autoFinanceCandidates(['Caixinha'], { year: 2026, month: 11 });
+  assert.equal(r5.preferred, null);
+  assert.equal(r5.currentName, 'NOV_2026');
 });
 
 test('divisão do gasto coletivo: regra atual (pagador fora) e centavos exatos', () => {
