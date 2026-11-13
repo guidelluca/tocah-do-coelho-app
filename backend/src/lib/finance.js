@@ -215,23 +215,22 @@ function listMonthSheets(titles) {
 }
 
 /**
- * Ordem de candidatos para o modo AUTO:
- * 1) aba do mês civil (SP); 2) mais recentes até o mês atual; 3) mês seguinte; 4) qualquer uma.
+ * Ordem de candidatos para o modo AUTO.
+ * O mês atual do app é a aba mensal MAIS RECENTE da planilha: assim que alguém cria
+ * a aba do mês seguinte (ex. DEZ_2026 no fim de novembro, quando cai o salário), o app
+ * já passa a tratá-la como atual — sem esperar o mês civil virar.
+ * Depois vêm as outras abas mensais, da mais nova para a mais antiga (fallback de leitura).
+ * `currentName` (mês civil em SP) só é usado quando a planilha não tem nenhuma aba mensal.
  */
 function autoFinanceCandidates(titlesRaw, now = getSaoPauloYearMonth()) {
   const titles = (titlesRaw || []).map((t) => String(t || '').trim()).filter(Boolean);
   const { year, month } = now;
   const currentName = `${MONTHS_PT[month - 1]}_${year}`;
-  const preferred = findTitle(titles, currentName) || findTitleByCivilMonth(titles, year, month);
-  const parsed = titles.map(parseMonthSheetTitle).filter(Boolean);
-  const currentOrder = year * 12 + (month - 1);
-  let eligible = parsed.filter((p) => monthSheetOrder(p) <= currentOrder);
-  if (!eligible.length) eligible = parsed.filter((p) => monthSheetOrder(p) === currentOrder + 1);
-  if (!eligible.length) eligible = parsed.slice();
-  eligible.sort((a, b) => monthSheetOrder(b) - monthSheetOrder(a));
   const ordered = [];
-  if (preferred) ordered.push(preferred);
-  for (const e of eligible) if (!ordered.includes(e.title)) ordered.push(e.title);
+  for (const p of titles.map(parseMonthSheetTitle).filter(Boolean).sort((a, b) => monthSheetOrder(b) - monthSheetOrder(a))) {
+    if (!ordered.includes(p.title)) ordered.push(p.title);
+  }
+  const preferred = ordered[0] || null;
   return { preferred, ordered, currentName };
 }
 

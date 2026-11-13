@@ -26,7 +26,7 @@ const {
   CAIXINHA_RANGE = 'Caixinha!C2',
   TAREFA_RANGE = 'Painel da Semana!A:Z',
   /**
-   * Aba das finanças: nome da aba (ex. JUN_2026) ou AUTO (mês civil em São Paulo).
+   * Aba das finanças: nome da aba (ex. JUN_2026) ou AUTO (aba mensal mais recente da planilha).
    * Sem valor → AUTO (antes era MAI_2026 fixo, o que deixava o app preso em maio).
    */
   FINANCE_ACTIVE_SHEET,
@@ -58,7 +58,8 @@ const DEFAULT_FINANCE_MODE = 'AUTO';
 const RESIDENTS = feedLib.RESIDENTS;
 const MAX_SHEET_CELL_CHARS = 45000;
 const READ_CACHE_TTL_MS = 120000;
-const TITLES_CACHE_TTL_MS = 10 * 60 * 1000;
+/** Curto para o app enxergar logo uma aba de mês nova (1 chamada de metadados por minuto, no máximo). */
+const TITLES_CACHE_TTL_MS = 60 * 1000;
 const STARTED_AT = new Date().toISOString();
 
 const DEFAULT_CONFIG = [
