@@ -40,7 +40,8 @@ function abrirMenuBotTarefas() {
   });
 
   var apresentacao = ui.createMenu('Como funcionam as tarefas (e-mail)')
-      .addItem('Prévia: mandar só para mim', 'enviarApresentacaoTarefasTESTE')
+      .addItem('🧪 Teste: mandar só para mim', 'enviarApresentacaoTarefasTESTE')
+      .addItem('Enviar para o Felipe', 'enviarApresentacao_FELIPE')
       .addItem('Enviar para todos', 'enviarApresentacaoTarefasTodos')
       .addSeparator();
   (function () { try { return getListaMoradores(true); } catch (e) { return []; } })().forEach(function (m) {
@@ -109,7 +110,7 @@ function mostrarSidebarTarefas() {
 }
 
 function getHtmlSidebar() {
-  const moradores = getListaMoradores();
+  const moradores = getListaMoradores(true);
   const feitos = concluidasNoApp_();
   const atribuicoes = getAtribuicoesSemana();
   const feitosN = atribuicoes.filter(function (a) { return feitos[normNome_(a.morador.nome)]; }).length;
@@ -130,7 +131,10 @@ function getHtmlSidebar() {
       '<button class="soft" onclick="google.script.run.mostrarStatusDaSemana()">✅ Status da semana</button>' +
       '<button class="soft" onclick="google.script.run.mostrarPainelPrevisao()">📅 Escala das próximas 4 semanas</button>' +
       '<button class="soft" onclick="window.open(\'' + APP_URL + '\',\'_blank\')">📱 Abrir o app da casa</button>' +
-      '<button class="soft" onclick="run(this,\'enviarApresentacaoTarefasTESTE\',null,\'Prévia enviada pra você!\')">📘 Prévia: como funcionam as tarefas</button>' +
+      '<div class="sec" style="margin-top:14px">Como funcionam as tarefas (e-mail)</div>' +
+      '<button class="soft" onclick="run(this,\'enviarApresentacaoTarefasTESTE\',null,\'Teste enviado pra você!\')">🧪 Teste: mandar só para mim</button>' +
+      '<button onclick="if(confirm(\'Mandar o e-mail Como funcionam as tarefas para o Felipe?\'))run(this,\'enviarApresentacao_FELIPE\',null,\'Enviado para o Felipe!\')">📘 Enviar para o Felipe</button>' +
+      '<button onclick="run(this,\'enviarApresentacaoTarefasTodos\',null,\'Enviado para todos!\')">📘 Enviar para todos</button>' +
       '<div class="sec" style="margin-top:14px">Enviar só para</div>' + botoesIndividuais +
       '<div class="sec" style="margin-top:14px">Rodízio</div>' +
       '<button onclick="if(confirm(\'Avançar a escala geral em 1 semana?\'))run(this,\'avancarRodizioManualmente\',null,\'Rodízio avançado! O app já foi atualizado.\')">🔄 Pular rodízio geral</button>' +
@@ -555,7 +559,7 @@ function atualizarLinkWhatsBanheirao(morador, tarefa, isLembrete, aba, dadosAba)
 
 function executarEnvioIndividual(isLembrete, nomeEspecifico) {
   const atribuicoes = atribuicoesComAjustes_(0);
-  const morador = getListaMoradores().find(function (m) {
+  const morador = getListaMoradores(true).find(function (m) {
     return m.nome === nomeEspecifico;
   });
   if (!morador) {
@@ -1034,7 +1038,7 @@ function prazoBonito_(prazo) {
 }
 
 function corAvatar_(nome) {
-  var lista = getListaMoradores();
+  var lista = getListaMoradores(true);
   var idx = -1;
   for (var i = 0; i < lista.length; i++) if (lista[i].nome === nome) idx = i;
   if (idx < 0) {
@@ -1673,7 +1677,7 @@ function dataBonita_(iso) {
 }
 
 function emailDe_(nome) {
-  var m = getListaMoradores().filter(function (x) { return normNome_(x.nome) === normNome_(nome); })[0];
+  var m = getListaMoradores(true).filter(function (x) { return normNome_(x.nome) === normNome_(nome); })[0];
   return m ? m.email : '';
 }
 
