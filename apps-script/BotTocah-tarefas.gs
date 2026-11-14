@@ -35,7 +35,7 @@ function abrirMenuBotTarefas() {
   var escala = ui.createMenu('Escala da semana (e-mail)')
       .addItem('Enviar para todos', 'rodizioTarefasTocah')
       .addSeparator();
-  (function () { try { return getListaMoradores(); } catch (e) { return []; } })().forEach(function (m) {
+  (function () { try { return getListaMoradores(true); } catch (e) { return []; } })().forEach(function (m) {
     escala.addItem('Enviar só para ' + m.nome, 'enviarIndividual_' + m.nome.replace(/\s/g, ''));
   });
 
@@ -43,7 +43,7 @@ function abrirMenuBotTarefas() {
       .addItem('Prévia: mandar só para mim', 'enviarApresentacaoTarefasTESTE')
       .addItem('Enviar para todos', 'enviarApresentacaoTarefasTodos')
       .addSeparator();
-  (function () { try { return getListaMoradores(); } catch (e) { return []; } })().forEach(function (m) {
+  (function () { try { return getListaMoradores(true); } catch (e) { return []; } })().forEach(function (m) {
     apresentacao.addItem('Enviar só para ' + m.nome, 'enviarApresentacao_' + m.nome.replace(/\s/g, ''));
   });
   apresentacao.addSeparator().addItem('Abrir o descritivo das tarefas', 'abrirDescritivoTarefas');
@@ -209,41 +209,77 @@ function enviarIndividualPorNome(nome) {
   executarEnvioIndividual(false, nome);
 }
 
-function getListaMoradores() {
+/**
+ * Moradores. Quem tem "inicio" (segunda-feira, AAAA-MM-DD) só entra na escala, nos e-mails da casa e nas
+ * cobranças a partir dessa semana. getListaMoradores(true) devolve todo mundo (menu, previsões, apresentação).
+ */
+function getListaMoradores(incluirFuturos) {
+  var todos = getListaMoradoresCompleta_();
+  if (incluirFuturos) return todos;
+  var hoje = Utilities.formatDate(new Date(), 'America/Sao_Paulo', 'yyyy-MM-dd');
+  return todos.filter(function (m) { return !m.inicio || m.inicio <= hoje; });
+}
+
+function getListaMoradoresCompleta_() {
   return [
     { nome: 'ALLAN', email: 'allanmlima16@gmail.com', tel: '5519994945961' },
     { nome: 'RAMON', email: 'ramondominguess01@gmail.com', tel: '5531994335366' },
     { nome: 'GUSTAVO', email: 'gustavolucena2015@gmail.com', tel: '5582996959438' },
     { nome: 'GUILHERME', email: 'guilhermedeluca75@gmail.com', tel: '5512988931752' },
     // TODO: coloque o telefone do Felipe (formato 55DDDNUMERO) para o link de WhatsApp funcionar.
-    { nome: 'FELIPE', email: 'flpiresa@gmail.com', tel: '' },
+    { nome: 'FELIPE', email: 'flpiresa@gmail.com', tel: '', inicio: '2026-11-23' }, // entra na casa em 23/11
   ];
 }
 
 /* =====================================================================
  * RODÍZIO (v2, nov/2026) · TODAS as tarefas giram, inclusive o lixo
  *
- * Ponto de partida = semana de 09/11/2026 a 15/11/2026, exatamente como estava:
- *   Allan: Quintal + Nilde · Ramon: Lavanderia · Gustavo: Cozinha · Guilherme: Sala · Felipe: Lixo
- *   Banheirão: Ramon
- * A partir de segunda 16/11, toda segunda cada morador passa para a PRÓXIMA tarefa da lista
- * de getTarefasBase() (Quintal → Lavanderia → Cozinha → Sala → Lixo → Quintal...).
+ * Semanas especiais (ESCALAS_ESPECIAIS), na transição do Vitor para o Felipe:
+ *   09/11–15/11: como estava (o lixo era do Vitor, que saiu)
+ *   16/11–22/11: 4 moradores; o Guilherme faz Quintal + Nilde e também o Lixo
+ * A partir de 23/11 (Felipe na casa), toda segunda cada morador passa para a PRÓXIMA tarefa da
+ * lista de getTarefasBase() (Quintal → Lavanderia → Cozinha → Sala → Lixo → Quintal...).
  * Em 5 semanas todo mundo passa por todas.
- * Semanas antes do ponto de partida continuam com a regra antiga (só para a cobrança da
- * semana passada não mudar de dono).
+ * Semanas antes de 09/11 continuam com a regra antiga (só para a cobrança não mudar de dono).
  * ===================================================================== */
 
-var RODIZIO_ANCORA_MS = Date.parse('2026-11-09T00:00:00-03:00'); // segunda do ponto de partida
-/** Tarefa de cada morador na semana do ponto de partida (trecho do nome da área). */
-var RODIZIO_ANCORA_ESCALA = { ALLAN: 'QUINTAL', RAMON: 'LAVANDERIA', GUSTAVO: 'COZINHA', GUILHERME: 'SALA', FELIPE: 'LIXO' };
-/** Banheirão: rodízio só entre estas pessoas, nesta ordem. No ponto de partida era o Ramon. */
+/** Semanas com escala fixa (segunda AAAA-MM-DD → morador: trechos das tarefas). Valem acima do rodízio. */
+var ESCALAS_ESPECIAIS = {
+  '2026-11-09': { ALLAN: ['QUINTAL'], RAMON: ['LAVANDERIA'], GUSTAVO: ['COZINHA'], GUILHERME: ['SALA'] },
+  '2026-11-16': { ALLAN: ['LAVANDERIA'], RAMON: ['COZINHA'], GUSTAVO: ['SALA'], GUILHERME: ['QUINTAL', 'LIXO'] },
+};
+/** Antes desta segunda vale a regra antiga. */
+var RODIZIO_LEGADO_ATE_MS = Date.parse('2026-11-09T00:00:00-03:00');
+/** Rodízio de 5: começa nesta segunda, com esta escala (trecho do nome da área). */
+var RODIZIO_ANCORA_MS = Date.parse('2026-11-23T00:00:00-03:00');
+var RODIZIO_ANCORA_ESCALA = { ALLAN: 'COZINHA', RAMON: 'SALA', GUSTAVO: 'LIXO', GUILHERME: 'LAVANDERIA', FELIPE: 'QUINTAL' };
+/** Banheirão: rodízio só entre estas pessoas, nesta ordem. Na semana de 09/11 era o Ramon. */
 var BANHEIRAO_GRUPO = ['ALLAN', 'RAMON', 'GUSTAVO'];
+var BANHEIRAO_ANCORA_MS = Date.parse('2026-11-09T00:00:00-03:00');
 var BANHEIRAO_ANCORA = 'RAMON';
 
-/** Semanas entre a semana pedida e o ponto de partida (0 = semana de 09/11/2026). */
+function segundaDaSemana_(offsetSemana) {
+  return inicioSemanaSP_().getTime() + (offsetSemana || 0) * 7 * 86400000;
+}
+
+function semanasDesde_(ancoraMs, offsetSemana) {
+  return Math.round((segundaDaSemana_(offsetSemana) - ancoraMs) / (7 * 86400000));
+}
+
+/** Semanas entre a semana pedida e o início do rodízio de 5 (0 = semana de 23/11/2026). */
 function semanasDesdeAncora_(offsetSemana) {
-  var seg = inicioSemanaSP_().getTime() + (offsetSemana || 0) * 7 * 86400000;
-  return Math.round((seg - RODIZIO_ANCORA_MS) / (7 * 86400000));
+  return semanasDesde_(RODIZIO_ANCORA_MS, offsetSemana);
+}
+
+/** Junta 2 tarefas numa só (ex.: Quintal + Nilde e Lixo na mesma semana). */
+function juntarTarefas_(lista) {
+  if (lista.length === 1) return Object.assign({}, lista[0]);
+  return {
+    area: lista.map(function (t) { return t.area; }).join(' + '),
+    prazo: lista.every(function (t) { return /^DI[ÁA]RIO$/i.test(t.prazo); }) ? 'DIÁRIO' : lista[0].prazo,
+    freq: lista.map(function (t) { return t.freq; }).join(' / '),
+    desc: lista.map(function (t) { return '<b>' + nomeBonitoTarefa_(t.area) + ':</b> ' + t.desc; }).join('<br><br>'),
+  };
 }
 
 function getPulosRodizio_() {
@@ -311,7 +347,7 @@ function getAtribuicoesLegado_(offsetSemana) {
   var tarefas = getTarefasBase();
   var semana = getSemanaRotativa() + offsetSemana;
   var out = [];
-  getListaMoradores().forEach(function (morador, i) {
+  getListaMoradores(true).forEach(function (morador, i) {
     if (i >= legado.length) return; // o Felipe não existia nessas semanas
     var idx = indiceTarefaPorTrecho_(tarefas, legado[(i + semana) % legado.length]);
     out.push({ morador: morador, tarefa: Object.assign({}, tarefas[idx]) });
@@ -321,14 +357,25 @@ function getAtribuicoesLegado_(offsetSemana) {
 
 function getAtribuicoesSemana(offsetSemana) {
   if (offsetSemana === undefined) offsetSemana = 0;
-  var semanas = semanasDesdeAncora_(offsetSemana);
-  if (semanas < 0) return getAtribuicoesLegado_(offsetSemana);
-
+  var segunda = segundaDaSemana_(offsetSemana);
   var tarefas = getTarefasBase();
-  var passo = semanas + getPulosRodizio_();
+  var todos = getListaMoradores(true);
+
+  var chave = Utilities.formatDate(new Date(segunda + 12 * 3600000), 'America/Sao_Paulo', 'yyyy-MM-dd');
+  var especial = ESCALAS_ESPECIAIS[chave];
+  if (especial) {
+    return todos.filter(function (m) { return especial[m.nome]; }).map(function (m) {
+      var lista = especial[m.nome].map(function (t) { return tarefas[indiceTarefaPorTrecho_(tarefas, t)]; });
+      return { morador: m, tarefa: juntarTarefas_(lista) };
+    });
+  }
+  if (segunda < RODIZIO_LEGADO_ATE_MS) return getAtribuicoesLegado_(offsetSemana);
+
+  var passo = semanasDesdeAncora_(offsetSemana) + getPulosRodizio_();
   var usados = {};
   var atribuicoes = [];
-  getListaMoradores().forEach(function (morador, i) {
+  todos.forEach(function (morador, i) {
+    if (morador.inicio && Date.parse(morador.inicio + 'T00:00:00-03:00') > segunda) return; // ainda não chegou
     var base = indiceTarefaPorTrecho_(tarefas, RODIZIO_ANCORA_ESCALA[morador.nome] || '');
     if (base < 0) base = i; // morador novo fora do ponto de partida: entra pela posição na lista
     var idx = (((base + passo) % tarefas.length) + tarefas.length) % tarefas.length;
@@ -341,8 +388,8 @@ function getAtribuicoesSemana(offsetSemana) {
 
 function getBanheiraoSemana(offsetSemana) {
   if (offsetSemana === undefined) offsetSemana = 0;
-  const moradores = getListaMoradores();
-  var semanas = semanasDesdeAncora_(offsetSemana);
+  const moradores = getListaMoradores(true);
+  var semanas = semanasDesde_(BANHEIRAO_ANCORA_MS, offsetSemana);
   var sorteadoNome;
   if (semanas < 0) {
     // regra antiga
@@ -2360,11 +2407,11 @@ function safePendentesSemanaPassada_() {
  * ===================================================================== */
 
 /** Recado opcional no topo do e-mail. Deixe '' para não mostrar. */
-var APRESENTACAO_RECADO = 'O Felipe chegou na casa e já entra no rodízio. Seja bem-vindo, Felipe! 💜';
+var APRESENTACAO_RECADO = 'O Felipe chega no dia 23/11 e entra no rodízio a partir daí. Seja bem-vindo, Felipe! 💜 Na semana de 16 a 22/11, ainda com 4 pessoas, o Guilherme fica com o Quintal + Nilde e também o Lixo.';
 var ADMIN_TAREFAS = 'GUILHERME';
 
 function enviarApresentacaoTarefasTESTE() {
-  var admin = getListaMoradores().filter(function (m) { return m.nome === ADMIN_TAREFAS; })[0];
+  var admin = getListaMoradores(true).filter(function (m) { return m.nome === ADMIN_TAREFAS; })[0];
   if (!admin) throw new Error('Admin não está na lista de moradores.');
   enviarEmail_({
     to: admin.email,
@@ -2382,7 +2429,7 @@ function enviarApresentacaoTarefasTodos() {
   } catch (e) { /* sem tela (gatilho): segue */ }
   var ok = [];
   var falhas = [];
-  getListaMoradores().forEach(function (m) {
+  getListaMoradores(true).forEach(function (m) {
     try {
       var enviado = enviarEmail_({ to: m.email, subject: '📘 Como funcionam as tarefas da Tocah', htmlBody: montarHtmlApresentacaoTarefas_(m, false) });
       (enviado ? ok : falhas).push(m.nome);
@@ -2391,11 +2438,11 @@ function enviarApresentacaoTarefasTodos() {
     }
   });
   registrarLog('Apresentação das tarefas', 'Enviado: ' + (ok.join(', ') || '—') + (falhas.length ? ' · Falhou: ' + falhas.join(', ') : ''));
-  alertaSeguro_('✅ Apresentação enviada para ' + ok.length + ' de ' + getListaMoradores().length + '.' + (falhas.length ? '\nFalhou: ' + falhas.join(', ') : ''));
+  alertaSeguro_('✅ Apresentação enviada para ' + ok.length + ' de ' + getListaMoradores(true).length + '.' + (falhas.length ? '\nFalhou: ' + falhas.join(', ') : ''));
 }
 
 function enviarApresentacaoPorNome_(nome) {
-  var m = getListaMoradores().filter(function (x) { return x.nome === nome; })[0];
+  var m = getListaMoradores(true).filter(function (x) { return x.nome === nome; })[0];
   if (!m) throw new Error('Morador não encontrado: ' + nome);
   enviarEmail_({ to: m.email, subject: '📘 Como funcionam as tarefas da Tocah', htmlBody: montarHtmlApresentacaoTarefas_(m, false) });
   registrarLog('Apresentação das tarefas', 'Enviado para ' + nome);
@@ -2500,9 +2547,9 @@ function montarHtmlApresentacaoTarefas_(morador, ehTeste) {
           ';font-size:13px;font-weight:700;line-height:1.45;color:' + C.onWarningSoft + ';text-align:center;">⚠️ MODO TESTE — no envio de verdade, cada morador recebe a própria versão.</div>') : '';
 
   var semanas = semanasDesdeAncora_(0);
-  var dataViraTudo = Utilities.formatDate(new Date(RODIZIO_ANCORA_MS + 7 * 86400000 + 12 * 3600000), 'America/Sao_Paulo', 'dd/MM');
-  var novidade = semanas <= 0 ?
-      'A partir de ' + b('segunda, ' + dataViraTudo) + ', ' + b('todas as tarefas entram no rodízio') + ', inclusive o lixo, que antes era fixo. Esta semana fica como está.' :
+  var dataViraTudo = Utilities.formatDate(new Date(RODIZIO_ANCORA_MS + 12 * 3600000), 'America/Sao_Paulo', 'dd/MM');
+  var novidade = semanas < 0 ?
+      'A partir de ' + b('segunda, ' + dataViraTudo) + ', com 5 moradores, ' + b('todas as tarefas entram no rodízio') + ', inclusive o lixo, que antes era fixo.' :
       'Desde ' + dataViraTudo + ', ' + b('todas as tarefas estão no rodízio') + ', inclusive o lixo.';
 
   var intro = htmlEmailCard_(
@@ -2521,6 +2568,17 @@ function montarHtmlApresentacaoTarefas_(morador, ehTeste) {
   var tb = getTarefaBanheirao();
   var cardAtual = atual ?
       htmlEmailCartaoMorador_(morador.nome, atual.tarefa, banh && banh.nome === morador.nome ? htmlEmailExtraBanheirao(tb) : '', true) : '';
+  var rotuloAtual = 'Sua tarefa nesta semana';
+  if (!atual) {
+    // Ainda não chegou na casa: mostra a primeira tarefa dele.
+    for (var w0 = 1; w0 <= 8 && !cardAtual; w0++) {
+      var prim = getAtribuicoesSemana(w0).filter(function (x) { return x.morador.nome === morador.nome; })[0];
+      if (prim) {
+        rotuloAtual = 'Sua primeira tarefa · a partir de ' + periodoCurto_(w0).split(' a ')[0];
+        cardAtual = htmlEmailCartaoMorador_(morador.nome, prim.tarefa, '', true);
+      }
+    }
+  }
 
   // ===== Sua sequência (esta semana + 4) =====
   var seq = '';
@@ -2627,7 +2685,7 @@ function montarHtmlApresentacaoTarefas_(morador, ehTeste) {
               '<a href="' + GUIA_TAREFAS_URL + '" style="color:' + C.primary + ';font-weight:800;text-decoration:none;">descritivo completo</a>.')) +
       linha_(intro) +
       linha_(botaoAvaliar_('Ver o descritivo completo das tarefas →', GUIA_TAREFAS_URL)) +
-      (cardAtual ? linha_('<div style="margin:6px 4px 8px;font-family:' + ff + ';font-size:11px;font-weight:800;letter-spacing:0.12em;text-transform:uppercase;color:' + C.primary + ';">Sua tarefa nesta semana</div>' + cardAtual) : '') +
+      (cardAtual ? linha_('<div style="margin:6px 4px 8px;font-family:' + ff + ';font-size:11px;font-weight:800;letter-spacing:0.12em;text-transform:uppercase;color:' + C.primary + ';">' + rotuloAtual + '</div>' + cardAtual) : '') +
       linha_(cardSeq) +
       linha_(calendario) +
       linha_(cardTarefas) +

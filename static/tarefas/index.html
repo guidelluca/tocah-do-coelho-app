@@ -142,7 +142,7 @@
   <section id="rodizio" class="card">
     <div class="ov">Rodízio</div>
     <h2>Todo mundo passa por tudo</h2>
-    <p class="sub">Desde 16/11/2026 as 5 tarefas giram entre os 5 moradores, inclusive o lixo, que antes era fixo. A cada segunda você anda uma casa nesta roda:</p>
+    <p class="sub">A partir de 23/11/2026, com o Felipe na casa, as 5 tarefas giram entre os 5 moradores, inclusive o lixo, que antes era fixo. A cada segunda você anda uma casa nesta roda:</p>
     <div class="ring">
       <span class="pill pp">🐰 Quintal + Nilde</span><span class="arrow">→</span>
       <span class="pill pp">🧺 Lavanderia</span><span class="arrow">→</span>
@@ -150,6 +150,7 @@
       <span class="pill pp">📺 Sala</span><span class="arrow">→</span>
       <span class="pill pp">🗑️ Lixo</span><span class="arrow">↺</span>
     </div>
+    <div class="note i">Na semana de <b>16 a 22/11</b>, ainda com 4 pessoas, o Guilherme fica com o <b>Quintal + Nilde e também o Lixo</b>.</div>
     <p>Em 5 semanas cada um passou por todas, e a roda recomeça. O <b>banheirão</b> é um extra que gira à parte, só entre <b>Allan, Ramon e Gustavo</b>: um por semana, além da tarefa normal.</p>
 
     <h2 style="margin-top:20px;font-size:18px">Previsão das próximas semanas</h2>
@@ -301,35 +302,46 @@
 </div>
 
 <script>
-/* Previsão do rodízio: mesma regra do script da planilha (ponto de partida 09/11/2026). */
+/* Previsão do rodízio: mesma regra do script da planilha. */
 (function () {
   var MORADORES = ['ALLAN', 'RAMON', 'GUSTAVO', 'GUILHERME', 'FELIPE'];
   var TAREFAS = ['🐰 Quintal + Nilde', '🧺 Lavanderia', '🍳 Cozinha', '📺 Sala', '🗑️ Lixo'];
-  var BASE = { ALLAN: 0, RAMON: 1, GUSTAVO: 2, GUILHERME: 3, FELIPE: 4 };
-  var BANH = ['ALLAN', 'RAMON', 'GUSTAVO'];
-  var BANH_BASE = 1; // Ramon
-  var ANCORA = Date.UTC(2026, 10, 9, 3); // 09/11/2026 00:00 em Brasília
   var SEMANA = 7 * 864e5;
-  var agora = Date.now();
-  var atual = Math.floor((agora - ANCORA) / SEMANA);
-  var inicio = Math.max(0, atual);
+  var seg = function (a, m, d) { return Date.UTC(a, m - 1, d, 3); }; // 00:00 em Brasília
+  // Rodízio de 5 a partir de 23/11/2026
+  var ANCORA = seg(2026, 11, 23);
+  var BASE = { ALLAN: 2, RAMON: 3, GUSTAVO: 4, GUILHERME: 1, FELIPE: 0 };
+  // Semanas especiais (índices de TAREFAS)
+  var ESPECIAIS = {};
+  ESPECIAIS[seg(2026, 11, 9)] = { ALLAN: [0], RAMON: [1], GUSTAVO: [2], GUILHERME: [3] };
+  ESPECIAIS[seg(2026, 11, 16)] = { ALLAN: [1], RAMON: [2], GUSTAVO: [3], GUILHERME: [0, 4] };
+  // Banheirão: Allan, Ramon, Gustavo; na semana de 09/11 era o Ramon
+  var BANH = ['ALLAN', 'RAMON', 'GUSTAVO'], BANH_ANCORA = seg(2026, 11, 9), BANH_BASE = 1;
+
   function nome(n) { return n.charAt(0) + n.slice(1).toLowerCase(); }
   function dm(ms) { var d = new Date(ms - 3 * 36e5); return ('0' + d.getUTCDate()).slice(-2) + '/' + ('0' + (d.getUTCMonth() + 1)).slice(-2); }
+  var agoraSeg = seg(2026, 11, 9) + Math.floor((Date.now() - seg(2026, 11, 9)) / SEMANA) * SEMANA;
+  var inicio = Math.max(agoraSeg, seg(2026, 11, 16));
+
   var thead = document.querySelector('#previsao thead tr');
   MORADORES.forEach(function (m) { var th = document.createElement('th'); th.textContent = nome(m); thead.appendChild(th); });
   var tbody = document.querySelector('#previsao tbody');
-  for (var k = inicio; k < inicio + 6; k++) {
+  for (var i = 0; i < 6; i++) {
+    var s = inicio + i * SEMANA;
     var tr = document.createElement('tr');
-    if (k === atual) tr.className = 'now';
-    var seg = ANCORA + k * SEMANA;
+    if (s === agoraSeg) tr.className = 'now';
     var td = document.createElement('td');
     td.className = 'week';
-    td.innerHTML = dm(seg) + ' a ' + dm(seg + 6 * 864e5) + (k === atual ? '<br><span class="pill pp" style="margin-top:4px">Agora</span>' : '');
+    td.innerHTML = dm(s) + ' a ' + dm(s + 6 * 864e5) + (s === agoraSeg ? '<br><span class="pill pp" style="margin-top:4px">Agora</span>' : '');
     tr.appendChild(td);
-    var b = BANH[((BANH_BASE + k) % 3 + 3) % 3];
+    var kb = Math.round((s - BANH_ANCORA) / SEMANA);
+    var b = BANH[((BANH_BASE + kb) % 3 + 3) % 3];
+    var k = Math.round((s - ANCORA) / SEMANA);
     MORADORES.forEach(function (m) {
       var c = document.createElement('td');
-      c.innerHTML = TAREFAS[(BASE[m] + k) % TAREFAS.length] + (m === b ? '<br><span class="b">🚿 Banheirão</span>' : '');
+      var lista = ESPECIAIS[s] ? (ESPECIAIS[s][m] || null) : (k >= 0 ? [(BASE[m] + k) % TAREFAS.length] : null);
+      c.innerHTML = lista ? lista.map(function (t) { return TAREFAS[t]; }).join('<br>+ ') : '<span class="muted">—</span>';
+      if (m === b) c.innerHTML += '<br><span class="b">🚿 Banheirão</span>';
       tr.appendChild(c);
     });
     tbody.appendChild(tr);
