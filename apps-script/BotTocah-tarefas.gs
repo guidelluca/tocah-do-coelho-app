@@ -39,6 +39,15 @@ function abrirMenuBotTarefas() {
     escala.addItem('Enviar só para ' + m.nome, 'enviarIndividual_' + m.nome.replace(/\s/g, ''));
   });
 
+  var apresentacao = ui.createMenu('Como funcionam as tarefas (e-mail)')
+      .addItem('Prévia: mandar só para mim', 'enviarApresentacaoTarefasTESTE')
+      .addItem('Enviar para todos', 'enviarApresentacaoTarefasTodos')
+      .addSeparator();
+  (function () { try { return getListaMoradores(); } catch (e) { return []; } })().forEach(function (m) {
+    apresentacao.addItem('Enviar só para ' + m.nome, 'enviarApresentacao_' + m.nome.replace(/\s/g, ''));
+  });
+  apresentacao.addSeparator().addItem('Abrir o descritivo das tarefas', 'abrirDescritivoTarefas');
+
   var banheirao = ui.createMenu('Banheirão (e-mail)')
       .addItem('Enviar escala do banheirão', 'rodizioBanheiraoTocah')
       .addItem('Lembrete do banheirão', 'lembreteBanheiraoTocah');
@@ -75,6 +84,7 @@ function abrirMenuBotTarefas() {
 
   ui.createMenu('Bot Tarefas')
       .addSubMenu(escala)
+      .addSubMenu(apresentacao)
       .addSubMenu(banheirao)
       .addSubMenu(cobrancas)
       .addSeparator()
@@ -120,6 +130,7 @@ function getHtmlSidebar() {
       '<button class="soft" onclick="google.script.run.mostrarStatusDaSemana()">✅ Status da semana</button>' +
       '<button class="soft" onclick="google.script.run.mostrarPainelPrevisao()">📅 Escala das próximas 4 semanas</button>' +
       '<button class="soft" onclick="window.open(\'' + APP_URL + '\',\'_blank\')">📱 Abrir o app da casa</button>' +
+      '<button class="soft" onclick="run(this,\'enviarApresentacaoTarefasTESTE\',null,\'Prévia enviada pra você!\')">📘 Prévia: como funcionam as tarefas</button>' +
       '<div class="sec" style="margin-top:14px">Enviar só para</div>' + botoesIndividuais +
       '<div class="sec" style="margin-top:14px">Rodízio</div>' +
       '<button onclick="if(confirm(\'Avançar a escala geral em 1 semana?\'))run(this,\'avancarRodizioManualmente\',null,\'Rodízio avançado! O app já foi atualizado.\')">🔄 Pular rodízio geral</button>' +
@@ -149,9 +160,10 @@ function getOffsetRotacao() {
   return offset ? parseInt(offset, 10) : 0;
 }
 
+/** Pula o rodízio geral 1 semana (vale da semana atual em diante). */
 function avancarRodizioManualmente() {
   var props = PropertiesService.getDocumentProperties();
-  props.setProperty('OFFSET_ROTACAO', String(getOffsetRotacao() + 1));
+  props.setProperty('RODIZIO_PULOS', String(getPulosRodizio_() + 1));
   atualizarAbaPainelMes();
 }
 
@@ -172,9 +184,10 @@ function getOffsetBanheirao() {
   return offset ? parseInt(offset, 10) : 0;
 }
 
+/** Passa o banheirão para a próxima pessoa do grupo (vale da semana atual em diante). */
 function avancarBanheiraoManualmente() {
   var props = PropertiesService.getDocumentProperties();
-  props.setProperty('OFFSET_BANHEIRAO', String(getOffsetBanheirao() + 1));
+  props.setProperty('BANHEIRAO_PULOS', String(getPulosBanheirao_() + 1));
   atualizarAbaPainelMes();
 }
 
@@ -202,10 +215,46 @@ function getListaMoradores() {
     { nome: 'RAMON', email: 'ramondominguess01@gmail.com', tel: '5531994335366' },
     { nome: 'GUSTAVO', email: 'gustavolucena2015@gmail.com', tel: '5582996959438' },
     { nome: 'GUILHERME', email: 'guilhermedeluca75@gmail.com', tel: '5512988931752' },
+    // TODO: coloque o telefone do Felipe (formato 55DDDNUMERO) para o link de WhatsApp funcionar.
     { nome: 'FELIPE', email: 'flpiresa@gmail.com', tel: '' },
   ];
 }
 
+/* =====================================================================
+ * RODÍZIO (v2, nov/2026) · TODAS as tarefas giram, inclusive o lixo
+ *
+ * Ponto de partida = semana de 09/11/2026 a 15/11/2026, exatamente como estava:
+ *   Allan: Quintal + Nilde · Ramon: Lavanderia · Gustavo: Cozinha · Guilherme: Sala · Felipe: Lixo
+ *   Banheirão: Ramon
+ * A partir de segunda 16/11, toda segunda cada morador passa para a PRÓXIMA tarefa da lista
+ * de getTarefasBase() (Quintal → Lavanderia → Cozinha → Sala → Lixo → Quintal...).
+ * Em 5 semanas todo mundo passa por todas.
+ * Semanas antes do ponto de partida continuam com a regra antiga (só para a cobrança da
+ * semana passada não mudar de dono).
+ * ===================================================================== */
+
+var RODIZIO_ANCORA_MS = Date.parse('2026-11-09T00:00:00-03:00'); // segunda do ponto de partida
+/** Tarefa de cada morador na semana do ponto de partida (trecho do nome da área). */
+var RODIZIO_ANCORA_ESCALA = { ALLAN: 'QUINTAL', RAMON: 'LAVANDERIA', GUSTAVO: 'COZINHA', GUILHERME: 'SALA', FELIPE: 'LIXO' };
+/** Banheirão: rodízio só entre estas pessoas, nesta ordem. No ponto de partida era o Ramon. */
+var BANHEIRAO_GRUPO = ['ALLAN', 'RAMON', 'GUSTAVO'];
+var BANHEIRAO_ANCORA = 'RAMON';
+
+/** Semanas entre a semana pedida e o ponto de partida (0 = semana de 09/11/2026). */
+function semanasDesdeAncora_(offsetSemana) {
+  var seg = inicioSemanaSP_().getTime() + (offsetSemana || 0) * 7 * 86400000;
+  return Math.round((seg - RODIZIO_ANCORA_MS) / (7 * 86400000));
+}
+
+function getPulosRodizio_() {
+  return parseInt(PropertiesService.getDocumentProperties().getProperty('RODIZIO_PULOS') || '0', 10) || 0;
+}
+
+function getPulosBanheirao_() {
+  return parseInt(PropertiesService.getDocumentProperties().getProperty('BANHEIRAO_PULOS') || '0', 10) || 0;
+}
+
+/** Regra antiga (até 15/11/2026): mantida só para semanas anteriores ao ponto de partida. */
 function getSemanaRotativa() {
   const dataReferencia = new Date(2024, 0, 1);
   const hoje = new Date();
@@ -213,8 +262,22 @@ function getSemanaRotativa() {
   return Math.floor((hoje.getTime() - dataReferencia.getTime()) / msPorSemana) + getOffsetRotacao();
 }
 
+/** Ordem do rodízio: cada semana o morador anda uma posição nesta lista. */
 function getTarefasBase() {
   return [
+    {
+      area: 'QUINTAL + COELHA NILDE 🐰',
+      prazo: 'DIÁRIO',
+      freq: 'Quintal 2 em 2 dias / Nilde TODOS OS DIAS (2x)',
+      desc:
+          'Varrer toda a área externa e a lavanderia.<br><br>🥕 <b>ALIMENTAÇÃO DA NILDE:</b><br>• <b>Base (80%):</b> Feno de gramíneas à vontade (essencial para o desgaste dos dentes e digestão).<br>• <b>Manhã:</b> Feno novo + Folhas verdes escuras (rúcula, agrião, chicória).<br>• <b>Tarde/Noite:</b> Ração extrusada de qualidade (apenas 10-15% da dieta).<br>• <b>Água:</b> Trocar e manter fresca todo dia.<br>• <b>Atenção:</b> Petiscos como maçã (sem semente) e cenoura apenas 1 a 2 vezes por semana!',
+    },
+    {
+      area: 'LAVANDERIA E PANOS',
+      prazo: 'SEGUNDA-FEIRA',
+      freq: 'Semanal',
+      desc: 'Lavar todos os panos sujos. Limpar a lavanderia e varrer o chão.',
+    },
     {
       area: 'COZINHA',
       prazo: 'DOMINGO',
@@ -229,46 +292,49 @@ function getTarefasBase() {
       desc: 'Tirar lixos, destruir teias de aranha, varrer tudo, passar pano na TV/estante e organizar a bagunça.',
     },
     {
-      area: 'QUINTAL + COELHA NILDE 🐰',
+      area: 'LIXO',
       prazo: 'DIÁRIO',
-      freq: 'Quintal 2 em 2 dias / Nilde TODOS OS DIAS (2x)',
-      desc:
-          'Varrer toda a área externa e a lavanderia.<br><br>🥕 <b>ALIMENTAÇÃO DA NILDE:</b><br>• <b>Base (80%):</b> Feno de gramíneas à vontade (essencial para o desgaste dos dentes e digestão).<br>• <b>Manhã:</b> Feno novo + Folhas verdes escuras (rúcula, agrião, chicória).<br>• <b>Tarde/Noite:</b> Ração extrusada de qualidade (apenas 10-15% da dieta).<br>• <b>Água:</b> Trocar e manter fresca todo dia.<br>• <b>Atenção:</b> Petiscos como maçã (sem semente) e cenoura apenas 1 a 2 vezes por semana!',
-    },
-    {
-      area: 'LAVANDERIA E PANOS',
-      prazo: 'SEGUNDA-FEIRA',
-      freq: 'Semanal',
-      desc: 'Lavar todos os panos sujos. Limpar a lavanderia e varrer o chão.',
+      freq: 'Diária',
+      desc: 'Retirar lixos, levar orgânico na lixeira e organizar os recicláveis no portão lateral.',
     },
   ];
 }
 
-function getTarefaFelipe() {
-  return {
-    area: 'LIXO',
-    prazo: 'DIÁRIO',
-    freq: 'Diária',
-    desc: 'Retirar lixos, levar orgânico na lixeira e organizar os recicláveis no portão lateral.',
-  };
+function indiceTarefaPorTrecho_(tarefas, trecho) {
+  for (var i = 0; i < tarefas.length; i++) if (tarefas[i].area.indexOf(trecho) !== -1) return i;
+  return -1;
+}
+
+/** Regra antiga: 4 tarefas girando entre Allan, Ramon, Gustavo e Guilherme (o lixo era fixo). */
+function getAtribuicoesLegado_(offsetSemana) {
+  var legado = ['COZINHA', 'SALA', 'QUINTAL', 'LAVANDERIA'];
+  var tarefas = getTarefasBase();
+  var semana = getSemanaRotativa() + offsetSemana;
+  var out = [];
+  getListaMoradores().forEach(function (morador, i) {
+    if (i >= legado.length) return; // o Felipe não existia nessas semanas
+    var idx = indiceTarefaPorTrecho_(tarefas, legado[(i + semana) % legado.length]);
+    out.push({ morador: morador, tarefa: Object.assign({}, tarefas[idx]) });
+  });
+  return out;
 }
 
 function getAtribuicoesSemana(offsetSemana) {
   if (offsetSemana === undefined) offsetSemana = 0;
-  const moradores = getListaMoradores();
-  const tarefas = getTarefasBase();
-  const semanaAno = getSemanaRotativa() + offsetSemana;
-  const atribuicoes = [];
+  var semanas = semanasDesdeAncora_(offsetSemana);
+  if (semanas < 0) return getAtribuicoesLegado_(offsetSemana);
 
-  moradores.forEach(function (morador, i) {
-    var tarefa;
-    if (morador.nome === 'FELIPE') {
-      tarefa = getTarefaFelipe();
-    } else {
-      const indice = (i + semanaAno) % tarefas.length;
-      tarefa = Object.assign({}, tarefas[indice]);
-    }
-    atribuicoes.push({ morador: morador, tarefa: tarefa });
+  var tarefas = getTarefasBase();
+  var passo = semanas + getPulosRodizio_();
+  var usados = {};
+  var atribuicoes = [];
+  getListaMoradores().forEach(function (morador, i) {
+    var base = indiceTarefaPorTrecho_(tarefas, RODIZIO_ANCORA_ESCALA[morador.nome] || '');
+    if (base < 0) base = i; // morador novo fora do ponto de partida: entra pela posição na lista
+    var idx = (((base + passo) % tarefas.length) + tarefas.length) % tarefas.length;
+    if (usados[idx]) registrarLog('ERRO rodízio', 'Duas pessoas com a mesma tarefa: confira RODIZIO_ANCORA_ESCALA.');
+    usados[idx] = true;
+    atribuicoes.push({ morador: morador, tarefa: Object.assign({}, tarefas[idx]) });
   });
   return atribuicoes;
 }
@@ -276,9 +342,17 @@ function getAtribuicoesSemana(offsetSemana) {
 function getBanheiraoSemana(offsetSemana) {
   if (offsetSemana === undefined) offsetSemana = 0;
   const moradores = getListaMoradores();
-  const vitimasBanheirao = ['ALLAN', 'RAMON', 'GUSTAVO'];
-  const semanaEfetivaBanheirao = getSemanaRotativa() + getOffsetBanheirao() + offsetSemana;
-  const sorteadoNome = vitimasBanheirao[semanaEfetivaBanheirao % vitimasBanheirao.length];
+  var semanas = semanasDesdeAncora_(offsetSemana);
+  var sorteadoNome;
+  if (semanas < 0) {
+    // regra antiga
+    var semanaEfetivaBanheirao = getSemanaRotativa() + getOffsetBanheirao() + offsetSemana;
+    sorteadoNome = BANHEIRAO_GRUPO[((semanaEfetivaBanheirao % BANHEIRAO_GRUPO.length) + BANHEIRAO_GRUPO.length) % BANHEIRAO_GRUPO.length];
+  } else {
+    var n = BANHEIRAO_GRUPO.length;
+    var base = Math.max(0, BANHEIRAO_GRUPO.indexOf(BANHEIRAO_ANCORA));
+    sorteadoNome = BANHEIRAO_GRUPO[(((base + semanas + getPulosBanheirao_()) % n) + n) % n];
+  }
   for (var i = 0; i < moradores.length; i++) {
     if (moradores[i].nome === sorteadoNome) return moradores[i];
   }
@@ -854,6 +928,8 @@ function instalarGatilhoEscalaApp() {
  * ===================================================================== */
 
 const APP_URL = 'https://guidelluca.github.io/tocah-do-coelho-app/';
+/** Descritivo completo das tarefas (página publicada junto com o app). */
+const GUIA_TAREFAS_URL = APP_URL + 'tarefas/';
 
 const TOCAH_COR = {
   bg: '#F6F4FA',
@@ -1136,6 +1212,7 @@ function htmlEmailRodape() {
       '🐰 República Tocah do Coelho</div>\n' +
       '<div style="margin-top:6px;font-size:12px;font-weight:600;line-height:1.5;color:' + TOCAH_COR.textSubtle + ';">' +
       'Mensagem automática das tarefas. Marque como feita no app ou alinhe no grupo da casa.</div>\n' +
+      '<div style="margin-top:6px;font-size:12px;font-weight:700;"><a href="' + GUIA_TAREFAS_URL + '" style="color:' + TOCAH_COR.primary + ';text-decoration:none;">Como funcionam as tarefas &rarr;</a></div>\n' +
       '</td></tr>\n'
   );
 }
@@ -2272,4 +2349,303 @@ function safePendentesSemanaPassada_() {
   } catch (e) {
     return '';
   }
+}
+
+/* =====================================================================
+ * E-MAIL "COMO FUNCIONAM AS TAREFAS" · apresentação do rodízio, prazos, foto, avaliação e multa
+ * Menu: Bot Tarefas → Como funcionam as tarefas (e-mail)
+ *  - Prévia: só para o admin (com faixa amarela de teste)
+ *  - Enviar para todos: cada morador recebe a sua versão (com a tarefa e a sequência dele)
+ * O botão principal leva ao descritivo completo (GUIA_TAREFAS_URL).
+ * ===================================================================== */
+
+/** Recado opcional no topo do e-mail. Deixe '' para não mostrar. */
+var APRESENTACAO_RECADO = 'O Felipe chegou na casa e já entra no rodízio. Seja bem-vindo, Felipe! 💜';
+var ADMIN_TAREFAS = 'GUILHERME';
+
+function enviarApresentacaoTarefasTESTE() {
+  var admin = getListaMoradores().filter(function (m) { return m.nome === ADMIN_TAREFAS; })[0];
+  if (!admin) throw new Error('Admin não está na lista de moradores.');
+  enviarEmail_({
+    to: admin.email,
+    subject: '[TESTE] 📘 Como funcionam as tarefas da Tocah',
+    htmlBody: montarHtmlApresentacaoTarefas_(admin, true),
+  });
+  registrarLog('Apresentação das tarefas', '[TESTE] Enviado para ' + admin.email);
+  alertaSeguro_('✅ Prévia enviada para ' + admin.email + '.');
+}
+
+function enviarApresentacaoTarefasTodos() {
+  try {
+    var ui = SpreadsheetApp.getUi();
+    if (ui.alert('📘 Como funcionam as tarefas', 'Enviar o e-mail de apresentação para TODOS os moradores?', ui.ButtonSet.YES_NO) !== ui.Button.YES) return;
+  } catch (e) { /* sem tela (gatilho): segue */ }
+  var ok = [];
+  var falhas = [];
+  getListaMoradores().forEach(function (m) {
+    try {
+      var enviado = enviarEmail_({ to: m.email, subject: '📘 Como funcionam as tarefas da Tocah', htmlBody: montarHtmlApresentacaoTarefas_(m, false) });
+      (enviado ? ok : falhas).push(m.nome);
+    } catch (e) {
+      falhas.push(m.nome + ' (' + String(e.message || e) + ')');
+    }
+  });
+  registrarLog('Apresentação das tarefas', 'Enviado: ' + (ok.join(', ') || '—') + (falhas.length ? ' · Falhou: ' + falhas.join(', ') : ''));
+  alertaSeguro_('✅ Apresentação enviada para ' + ok.length + ' de ' + getListaMoradores().length + '.' + (falhas.length ? '\nFalhou: ' + falhas.join(', ') : ''));
+}
+
+function enviarApresentacaoPorNome_(nome) {
+  var m = getListaMoradores().filter(function (x) { return x.nome === nome; })[0];
+  if (!m) throw new Error('Morador não encontrado: ' + nome);
+  enviarEmail_({ to: m.email, subject: '📘 Como funcionam as tarefas da Tocah', htmlBody: montarHtmlApresentacaoTarefas_(m, false) });
+  registrarLog('Apresentação das tarefas', 'Enviado para ' + nome);
+  alertaSeguro_('✅ Apresentação enviada para ' + nome + '.');
+}
+
+function enviarApresentacao_ALLAN() { enviarApresentacaoPorNome_('ALLAN'); }
+function enviarApresentacao_RAMON() { enviarApresentacaoPorNome_('RAMON'); }
+function enviarApresentacao_GUSTAVO() { enviarApresentacaoPorNome_('GUSTAVO'); }
+function enviarApresentacao_GUILHERME() { enviarApresentacaoPorNome_('GUILHERME'); }
+function enviarApresentacao_FELIPE() { enviarApresentacaoPorNome_('FELIPE'); }
+
+function abrirDescritivoTarefas() {
+  var html = HtmlService.createHtmlOutput(htmlPainelDoc_(
+      '<div class="hero"><div class="ov light">Tarefas da casa</div><div class="h1">Abrindo o descritivo…</div></div>' +
+      '<button class="primary" onclick="window.open(\'' + GUIA_TAREFAS_URL + '\',\'_blank\');google.script.host.close()">Abrir o descritivo 📘</button>' +
+      '<script>window.open(\'' + GUIA_TAREFAS_URL + '\',\'_blank\');</script>')).setWidth(320).setHeight(190);
+  SpreadsheetApp.getUi().showModalDialog(html, 'Tocah');
+}
+
+/** Valor da aba Config (mesmas chaves que o app usa). */
+function configValor_(chave, padrao) {
+  try {
+    var aba = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Config');
+    if (aba) {
+      var linhas = aba.getDataRange().getValues();
+      for (var i = 0; i < linhas.length; i++) {
+        if (String(linhas[i][0]).trim() === chave) return String(linhas[i][1]).trim() || padrao;
+      }
+    }
+  } catch (e) {}
+  return padrao;
+}
+
+/** "16/11 a 22/11" da semana atual + offset. */
+function periodoCurto_(offset) {
+  var seg = new Date(inicioSemanaSP_().getTime() + (offset || 0) * 7 * 86400000 + 12 * 3600000);
+  var dom = new Date(seg.getTime() + 6 * 86400000);
+  var f = function (d) { return Utilities.formatDate(d, 'America/Sao_Paulo', 'dd/MM'); };
+  return f(seg) + ' a ' + f(dom);
+}
+
+/** Ícone e resumo de uma linha de cada tarefa (o detalhe completo fica no descritivo). */
+function resumoTarefa_(area) {
+  var a = normNome_(area);
+  if (a.indexOf('QUINTAL') !== -1) return { icone: '🐰', resumo: 'Quintal varrido a cada 2 dias e a Nilde alimentada 2x por dia, todos os dias.' };
+  if (a.indexOf('LAVANDERIA') !== -1) return { icone: '🧺', resumo: 'Lavar os panos da casa, limpar a lavanderia e varrer o chão.' };
+  if (a.indexOf('COZINHA') !== -1) return { icone: '🍳', resumo: 'Pia, fogão, micro-ondas e filtro limpos, louça guardada, ralo todo dia e chão até domingo.' };
+  if (a.indexOf('SALA') !== -1) return { icone: '📺', resumo: 'Lixinhos, teias, chão varrido, TV e estante sem pó e tudo organizado.' };
+  if (a.indexOf('LIXO') !== -1) return { icone: '🗑️', resumo: 'Tirar o lixo todo dia, orgânico na lixeira e recicláveis organizados no portão lateral.' };
+  if (a.indexOf('BANHEIR') !== -1) return { icone: '🚿', resumo: 'Vaso, pia, box, ralo, espelho e chão.' };
+  return { icone: '🧹', resumo: '' };
+}
+
+function montarHtmlApresentacaoTarefas_(morador, ehTeste) {
+  var C = TOCAH_COR;
+  var ff = htmlEmailFontStack();
+  var INFO = { bg: '#E5EDFC', fg: '#1D47AB' };
+  var nome = nomeCurto_(morador.nome);
+  var multa = multaValor_();
+  var mediaMin = configValor_('avaliacaoMediaMinima', '3').replace('.', ',');
+  var minAval = configValor_('avaliacaoMinAvaliacoes', '3');
+  var mediaAuto = ['SIM', 'TRUE', '1', 'ON', 'LIGADO'].indexOf(normNome_(configValor_('avaliacaoMultaMediaAuto', 'não'))) !== -1;
+  var b = function (t) { return '<b style="font-weight:800;color:' + C.text + ';">' + t + '</b>'; };
+  var tarefas = getTarefasBase();
+
+  function titulo_(overline, t, sub) {
+    return '<div style="font-size:11px;font-weight:800;letter-spacing:0.12em;text-transform:uppercase;color:' + C.primary + ';">' + overline + '</div>' +
+        '<div style="margin:3px 0 ' + (sub ? '4px' : '14px') + ';font-size:20px;font-weight:900;line-height:1.25;color:' + C.text + ';">' + t + '</div>' +
+        (sub ? '<div style="margin:0 0 14px;font-size:14px;font-weight:600;line-height:1.5;color:' + C.textMuted + ';">' + sub + '</div>' : '');
+  }
+  function linha_(conteudo) { return '<tr><td>' + conteudo + '</td></tr>\n'; }
+  function texto_(t) { return '<div style="font-size:14px;font-weight:600;line-height:1.6;color:' + C.textMuted + ';">' + t + '</div>'; }
+
+  /** Etapa da linha do tempo: selo com o dia + título + texto. */
+  function etapa_(rotulo, dia, cor, tituloEtapa, txt, ultimo) {
+    var borda = ultimo ? '' : 'border-bottom:1px solid ' + C.border + ';';
+    return '<tr>' +
+        '<td width="70" valign="top" style="width:70px;padding:12px 0;' + borda + '">' +
+        '<div style="width:58px;padding:8px 0 7px;border-radius:14px;text-align:center;background-color:' + cor.bg + ';font-family:' + ff + ';">' +
+        '<div style="font-size:9px;font-weight:800;letter-spacing:0.1em;color:' + cor.fg + ';">' + rotulo + '</div>' +
+        '<div style="margin-top:2px;font-size:15px;font-weight:900;line-height:1.1;color:' + cor.fg + ';">' + dia + '</div></div></td>' +
+        '<td valign="top" style="padding:12px 0;' + borda + 'font-family:' + ff + ';">' +
+        '<div style="font-size:15px;font-weight:800;line-height:1.35;color:' + C.text + ';">' + tituloEtapa + '</div>' +
+        '<div style="margin-top:3px;font-size:14px;font-weight:600;line-height:1.5;color:' + C.textMuted + ';">' + txt + '</div></td></tr>';
+  }
+
+  /** Lista numerada. */
+  function passos_(itens) {
+    var h = '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">';
+    for (var i = 0; i < itens.length; i++) {
+      var borda = i === itens.length - 1 ? '' : 'border-bottom:1px solid ' + C.border + ';';
+      h += '<tr><td width="40" valign="top" style="width:40px;padding:11px 0;' + borda + '">' +
+          '<div style="width:28px;height:28px;line-height:28px;border-radius:50%;text-align:center;background-color:' + C.primarySoft +
+          ';color:' + C.onPrimarySoft + ';font-family:' + ff + ';font-size:12px;font-weight:900;">' + (i + 1) + '</div></td>' +
+          '<td valign="top" style="padding:11px 0;' + borda + 'font-family:' + ff + ';">' +
+          '<div style="font-size:15px;font-weight:800;line-height:1.35;color:' + C.text + ';">' + itens[i][0] + '</div>' +
+          '<div style="margin-top:2px;font-size:14px;font-weight:600;line-height:1.5;color:' + C.textMuted + ';">' + itens[i][1] + '</div></td></tr>';
+    }
+    return h + '</table>';
+  }
+
+  // ===== Recado de teste / novidade =====
+  var banner = ehTeste ?
+      linha_('<div style="margin:0 0 12px;padding:12px 16px;border-radius:16px;background-color:' + C.warningSoft + ';border:1px solid #F1DDB4;font-family:' + ff +
+          ';font-size:13px;font-weight:700;line-height:1.45;color:' + C.onWarningSoft + ';text-align:center;">⚠️ MODO TESTE — no envio de verdade, cada morador recebe a própria versão.</div>') : '';
+
+  var semanas = semanasDesdeAncora_(0);
+  var dataViraTudo = Utilities.formatDate(new Date(RODIZIO_ANCORA_MS + 7 * 86400000 + 12 * 3600000), 'America/Sao_Paulo', 'dd/MM');
+  var novidade = semanas <= 0 ?
+      'A partir de ' + b('segunda, ' + dataViraTudo) + ', ' + b('todas as tarefas entram no rodízio') + ', inclusive o lixo, que antes era fixo. Esta semana fica como está.' :
+      'Desde ' + dataViraTudo + ', ' + b('todas as tarefas estão no rodízio') + ', inclusive o lixo.';
+
+  var intro = htmlEmailCard_(
+      titulo_('Rodízio', 'Todo mundo passa por tudo') +
+      texto_(novidade + ' Toda segunda cada um anda uma casa na lista: ' +
+          b('Quintal + Nilde → Lavanderia → Cozinha → Sala → Lixo') + ' e volta pro começo. Em ' + tarefas.length + ' semanas você passa por todas.') +
+      (APRESENTACAO_RECADO ? '<div style="margin-top:14px;padding:12px 14px;border-radius:14px;background-color:' + C.primarySoft + ';font-size:14px;font-weight:700;line-height:1.5;color:' + C.onPrimarySoft + ';">' + APRESENTACAO_RECADO + '</div>' : '') +
+      '<div style="margin-top:14px;">' +
+      htmlEmailPill_('🔄 Troca toda segunda', C.primarySoft, C.onPrimarySoft) +
+      htmlEmailPill_('📸 Entrega com foto no app', C.successSoft, C.onSuccessSoft) +
+      htmlEmailPill_('⭐ Nota de 1 a 5', C.warningSoft, C.onWarningSoft) +
+      htmlEmailPill_('💸 Multa de R$ ' + multa, C.dangerSoft, C.onDangerSoft) + '</div>');
+
+  // ===== Sua tarefa agora =====
+  var atual = getAtribuicoesSemana(0).filter(function (a) { return a.morador.nome === morador.nome; })[0];
+  var banh = getBanheiraoSemana(0);
+  var tb = getTarefaBanheirao();
+  var cardAtual = atual ?
+      htmlEmailCartaoMorador_(morador.nome, atual.tarefa, banh && banh.nome === morador.nome ? htmlEmailExtraBanheirao(tb) : '', true) : '';
+
+  // ===== Sua sequência (esta semana + 4) =====
+  var seq = '';
+  for (var w = 0; w < tarefas.length; w++) {
+    var a = getAtribuicoesSemana(w).filter(function (x) { return x.morador.nome === morador.nome; })[0];
+    if (!a) continue;
+    var bw = getBanheiraoSemana(w);
+    var r = resumoTarefa_(a.tarefa.area);
+    var borda = w === tarefas.length - 1 ? '' : 'border-bottom:1px solid ' + C.border + ';';
+    seq += '<tr>' +
+        '<td valign="middle" style="padding:10px 0;' + borda + 'font-family:' + ff + ';">' +
+        '<div style="font-size:12px;font-weight:800;color:' + (w === 0 ? C.primary : C.textSubtle) + ';">' + (w === 0 ? 'ESTA SEMANA · ' : '') + periodoCurto_(w) + '</div>' +
+        '<div style="margin-top:2px;font-size:15px;font-weight:800;color:' + C.text + ';">' + r.icone + ' ' + nomeBonitoTarefa_(a.tarefa.area).replace(' 🐰', '') + '</div></td>' +
+        '<td align="right" valign="middle" style="padding:10px 0;' + borda + '">' +
+        (bw && bw.nome === morador.nome ? htmlEmailPill_('🚿 + banheirão', C.dangerSoft, C.onDangerSoft) : '') + '</td></tr>';
+  }
+  var cardSeq = htmlEmailCard_(
+      titulo_('Sua sequência', 'Suas próximas semanas', 'Previsão do rodízio. A escala oficial de cada semana é a do app.') +
+      '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">' + seq + '</table>');
+
+  // ===== Calendário da semana =====
+  var cinza = { bg: C.surfaceAlt, fg: C.textMuted };
+  var roxo = { bg: C.primarySoft, fg: C.onPrimarySoft };
+  var verde = { bg: C.successSoft, fg: C.onSuccessSoft };
+  var amarelo = { bg: C.warningSoft, fg: C.onWarningSoft };
+  var vermelho = { bg: C.dangerSoft, fg: C.onDangerSoft };
+  var calendario = htmlEmailCard_(
+      titulo_('Calendário', 'Como é uma semana', 'A semana vai de segunda a domingo. O resto é automático.') +
+      '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">' +
+      etapa_('SEG', '8h', roxo, 'Troca da escala',
+          'De madrugada a tarefa nova já aparece no app e, às 8h, chega o e-mail com quem faz o quê na semana.') +
+      etapa_('SEG–DOM', 'Faça', cinza, 'Mãos à obra',
+          'Lembrete às 8h só pra quem ainda não entregou. ' + b('Lixo e Nilde são todo dia') + ': o lembrete diário sai mesmo depois da foto.') +
+      etapa_('DOM', '23h59', verde, 'Prazo da foto no app',
+          'Mande a foto da tarefa feita até domingo 23h59 (' + b('Lavanderia e Panos: segunda 23h59') + '). Antes disso chegam avisos: 2 dias antes, na véspera e no dia (9h, 18h e 22h).') +
+      etapa_('SEG–QUA', 'Atraso', amarelo, 'Ainda dá, mas conta atraso',
+          'Dá pra entregar atrasado até ' + b('quarta 23h59') + '. Cada dia de atraso fica registrado no seu desempenho, e chega um lembrete por dia.') +
+      etapa_('QUA', '23h59', vermelho, 'Multa automática',
+          'Quem não mandou a foto até quarta 23h59 leva ' + b('multa de R$ ' + multa) + ' na Caixinha, sem ninguém precisar cobrar.') +
+      etapa_('DEPOIS', '⭐', { bg: INFO.bg, fg: INFO.fg }, 'Avaliação anônima',
+          'Quando todo mundo entrega (ou o prazo de atraso acaba), abre a avaliação: cada um dá nota de 1 a 5 pras tarefas dos outros, pelo app ou pelo e-mail. Fecha no domingo seguinte; lembrete às 19h pra quem falta.', true) +
+      '</table>');
+
+  // ===== As tarefas =====
+  var itens = tarefas.map(function (t) {
+    var r = resumoTarefa_(t.area);
+    return [r.icone + ' ' + nomeBonitoTarefa_(t.area).replace(' 🐰', ''), r.resumo + ' <span style="color:' + C.textSubtle + ';">· ' + prazoBonito_(t.prazo) + '</span>'];
+  });
+  var gruposB = BANHEIRAO_GRUPO.map(nomeCurto_);
+  itens.push(['🚿 Banheirão (extra)', resumoTarefa_('BANHEIRAO').resumo + ' Gira só entre ' + gruposB.slice(0, -1).join(', ') + ' e ' + gruposB.slice(-1) +
+      ', um por semana, junto com a tarefa normal. <span style="color:' + C.textSubtle + ';">· Até domingo</span>']);
+  var cardTarefas = htmlEmailCard_(
+      titulo_('As tarefas', 'O que cada uma inclui', 'Resumo. O passo a passo completo de cada uma está no descritivo.') +
+      passos_(itens) +
+      '<div style="margin-top:14px;">' + botaoAvaliar_('Ver o descritivo completo das tarefas →', GUIA_TAREFAS_URL) + '</div>');
+
+  // ===== Como entregar =====
+  var cardEntregar = htmlEmailCard_(
+      titulo_('No app', 'Como entregar a tarefa') +
+      passos_([
+        ['Abra o app e vá em Tarefas', 'Sua tarefa da semana fica em destaque, com prazo e o que fazer.'],
+        ['Crie seu PIN (só na 1ª vez)', 'Assim ninguém manda foto ou dá nota no seu nome.'],
+        ['Toque em "Tirar foto da tarefa"', 'Pode mandar até 6 fotos. Antes e depois ajuda muito na avaliação.'],
+        ['Confira e envie de uma vez', 'Só dá pra enviar uma vez por semana: mande quando terminar tudo.'],
+      ]));
+
+  // ===== Multa =====
+  var regrasMulta = passos_([
+    ['Não entregou até quarta 23h59', 'Multa de ' + b('R$ ' + multa) + ' lançada sozinha na Caixinha.'],
+    ['Nota média abaixo de ' + mediaMin, 'Com pelo menos ' + minAval + ' notas, a tarefa conta como mal feita. ' +
+        (mediaAuto ? 'A multa de R$ ' + multa + ' entra automaticamente.' : 'A multa de R$ ' + multa + ' fica pendente e só vale se o admin confirmar (pra ninguém "combinar" nota baixa).')],
+    ['Entregou com atraso (até quarta)', 'Não tem multa, mas os dias de atraso ficam no seu desempenho e no ranking.'],
+  ]);
+  var cardMulta = htmlEmailCard_(
+      titulo_('Multa', 'Quanto, quando e por quê') +
+      '<div style="padding:16px 14px;border-radius:18px;background-color:' + C.dangerSoft + ';text-align:center;">' +
+      '<div style="font-size:11px;font-weight:800;letter-spacing:0.12em;text-transform:uppercase;color:' + C.onDangerSoft + ';">Valor por semana</div>' +
+      '<div style="margin-top:4px;font-size:36px;font-weight:900;line-height:1.05;color:' + C.onDangerSoft + ';">R$ ' + multa + '</div>' +
+      '<div style="margin-top:6px;font-size:13px;font-weight:700;color:' + C.onDangerSoft + ';">vai para a Caixinha da casa</div></div>' +
+      '<div style="margin-top:6px;">' + regrasMulta + '</div>' +
+      '<div style="margin-top:12px;padding:14px;border-radius:16px;background-color:' + C.surfaceAlt + ';font-family:' + ff + ';">' +
+      '<div style="font-size:14px;font-weight:900;color:' + C.text + ';">Por que existe multa?</div>' +
+      '<div style="margin-top:4px;font-size:14px;font-weight:600;line-height:1.55;color:' + C.textMuted + ';">' +
+      'Tarefa que não é feita não some: vira louça acumulada, lixo com bicho, a Nilde sem comida, ou trabalho a mais pra outra pessoa. ' +
+      'A multa não é pra arrecadar: o dinheiro vai pra Caixinha e volta pra todo mundo em compras da casa. É o jeito justo de quem não fez compensar quem fez.</div></div>' +
+      '<div style="margin-top:10px;font-size:13px;font-weight:600;line-height:1.5;color:' + C.textSubtle + ';">Achou que foi engano? Fala no grupo: a multa pode ser revista e removida.</div>');
+
+  // ===== Imprevistos =====
+  var cardImprevistos = htmlEmailCard_(
+      titulo_('Imprevistos', 'Viagem, doença ou semana puxada') +
+      passos_([
+        ['Avise antes do prazo', 'Fala no grupo da casa. O admin pode ' + b('trocar sua tarefa, mudar o prazo ou te dispensar') + ' na semana pelo app, e a cobrança para na hora.'],
+        ['Quer trocar com alguém?', 'Combinem entre vocês e avisem o admin pra ajustar no app. Sem ajuste, a cobrança vai pra quem está na escala.'],
+        ['Fez a tarefa e esqueceu a foto?', 'Ainda dá até quarta 23h59, com atraso registrado. Depois disso entra a multa.'],
+      ]));
+
+  // ===== Botão final =====
+  var botaoFinal = botaoAvaliar_('Ler o descritivo completo 📘', GUIA_TAREFAS_URL);
+
+  var periodo = getPeriodoValidade(0);
+  return (
+      htmlEmailDocOpen('Rodízio de todas as tarefas, prazos, foto no app, avaliação e multa: tudo o que você precisa saber.') +
+      htmlEmailHeroRoxo('Oi, ' + nome + '! Como funcionam as tarefas', '🔄 Rodízio · 📸 foto no app · ⭐ avaliação · 💸 multa', true, 'Tarefas da casa') +
+      htmlEmailCorpoAbre() +
+      banner +
+      linha_(htmlEmailChipPeriodo(periodo) +
+          htmlEmailLead('A casa fica em ordem quando cada um faz a sua parte na semana. Aqui vai o essencial; o detalhe de cada tarefa está no ' +
+              '<a href="' + GUIA_TAREFAS_URL + '" style="color:' + C.primary + ';font-weight:800;text-decoration:none;">descritivo completo</a>.')) +
+      linha_(intro) +
+      linha_(botaoAvaliar_('Ver o descritivo completo das tarefas →', GUIA_TAREFAS_URL)) +
+      (cardAtual ? linha_('<div style="margin:6px 4px 8px;font-family:' + ff + ';font-size:11px;font-weight:800;letter-spacing:0.12em;text-transform:uppercase;color:' + C.primary + ';">Sua tarefa nesta semana</div>' + cardAtual) : '') +
+      linha_(cardSeq) +
+      linha_(calendario) +
+      linha_(cardTarefas) +
+      linha_(cardEntregar) +
+      linha_(cardMulta) +
+      linha_(cardImprevistos) +
+      linha_(botaoFinal) +
+      htmlEmailCorpoFecha() +
+      htmlEmailRodape() +
+      htmlEmailDocClose()
+  );
 }
