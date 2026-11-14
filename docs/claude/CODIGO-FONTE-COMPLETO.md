@@ -384,7 +384,7 @@ function stripMonthNameDiacritics(value) {
     .replace(/[Çç]/g, (c) => (c === 'Ç' ? 'C' : 'c'))
     .toUpperCase();
 }
-const RESIDENTS = ['ALLAN', 'RAMON', 'VITOR', 'GUSTAVO', 'GUILHERME'];
+const RESIDENTS = ['ALLAN', 'RAMON', 'FELIPE', 'GUSTAVO', 'GUILHERME'];
 const MAX_SHEET_CELL_CHARS = 45000;
 const READ_CACHE_TTL_MS = 120000;
 const readCache = new Map();
@@ -903,7 +903,7 @@ function extractTaskForUser(rows = [], usuario = '') {
       if (String(row[i] || '').trim().toLowerCase() === target) {
         for (let j = i + 1; j < row.length; j += 1) {
           const v = String(row[j] || '').trim();
-          if (v && !['allan', 'ramon', 'vitor', 'gustavo', 'guilherme'].includes(v.toLowerCase())) return v;
+          if (v && !['allan', 'ramon', 'felipe', 'gustavo', 'guilherme'].includes(v.toLowerCase())) return v;
         }
       }
     }
@@ -938,7 +938,7 @@ function defaultScale() {
   return [
     { nome: 'ALLAN', tarefa: 'Quintal + Coelha Nilde' },
     { nome: 'RAMON', tarefa: 'Lavanderia e Panos' },
-    { nome: 'VITOR', tarefa: 'Lixo Diario' },
+    { nome: 'FELIPE', tarefa: 'Lixo Diario' },
     { nome: 'GUSTAVO', tarefa: 'Cozinha' },
     { nome: 'GUILHERME', tarefa: 'Sala, Corredor e Garagem' },
   ];
@@ -2083,7 +2083,7 @@ const styles = StyleSheet.create({
 ## `src/constants/residents.js`
 
 ```javascript
-export const RESIDENTS = ['ALLAN', 'RAMON', 'VITOR', 'GUSTAVO', 'GUILHERME'];
+export const RESIDENTS = ['ALLAN', 'RAMON', 'FELIPE', 'GUSTAVO', 'GUILHERME'];
 
 ```
 

@@ -1,1 +1,1 @@
-export const RESIDENTS = ['ALLAN', 'RAMON', 'VITOR', 'GUSTAVO', 'GUILHERME'];
+export const RESIDENTS = ['ALLAN', 'RAMON', 'FELIPE', 'GUSTAVO', 'GUILHERME'];

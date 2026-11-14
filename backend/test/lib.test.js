@@ -81,28 +81,28 @@ test('semana e data no fuso de São Paulo', () => {
 test('Nilde: estado montado a partir dos posts do feed (rótulos antigos sem acento)', () => {
   const items = [
     { type: 'comment', target: 'NILDE', tarefa: 'Manha - Feno', actor: 'ramon', ts: '2026-11-06T11:00:00Z', rowIndex: 5 },
-    { type: 'comment', target: 'NILDE', tarefa: 'Noite - Ração', actor: 'VITOR', ts: '2026-11-06T23:00:00Z', rowIndex: 6 },
+    { type: 'comment', target: 'NILDE', tarefa: 'Noite - Ração', actor: 'FELIPE', ts: '2026-11-06T23:00:00Z', rowIndex: 6 },
     { type: 'comment', target: 'NILDE', tarefa: 'Manhã - Feno', actor: 'ALLAN', ts: '2026-11-06T12:00:00Z', rowIndex: 7 },
   ];
   const log = feed.buildNildeWeek(items, ['2026-11-06']);
   assert.equal(log['2026-11-06'].manha_feno.by, 'RAMON');
-  assert.equal(log['2026-11-06'].noite_racao.by, 'VITOR');
+  assert.equal(log['2026-11-06'].noite_racao.by, 'FELIPE');
 });
 
 test('extractScale ignora duplicados e não inventa tarefa', () => {
-  const rows = [['Morador', 'Tarefa'], ['RAMON', 'Banheirão'], ['ramon', 'Outra'], ['VITOR']];
-  assert.deepEqual(feed.extractScale(rows), [{ nome: 'RAMON', tarefa: 'Banheirão' }, { nome: 'VITOR', tarefa: '-' }]);
+  const rows = [['Morador', 'Tarefa'], ['RAMON', 'Banheirão'], ['ramon', 'Outra'], ['FELIPE']];
+  assert.deepEqual(feed.extractScale(rows), [{ nome: 'RAMON', tarefa: 'Banheirão' }, { nome: 'FELIPE', tarefa: '-' }]);
   assert.equal(feed.extractTaskForUser(rows, 'gustavo'), '');
 });
 
 test('acertos depois de uma linha apagada continuam aparecendo', () => {
   const rows = [];
   rows[1] = []; rows[1][19] = 'QUEM'; rows[1][20] = 'DEVE QUANTO';
-  rows[2] = []; rows[2][19] = 'VITOR'; rows[2][20] = '10';
+  rows[2] = []; rows[2][19] = 'FELIPE'; rows[2][20] = '10';
   rows[3] = [];
   rows[4] = []; rows[4][19] = 'RAMON'; rows[4][20] = '20';
   const snap = fin.parseFinanceSnapshot(rows.map((r) => r || []));
-  assert.deepEqual(snap.acertosIndividuais.map((a) => a.quem), ['VITOR', 'RAMON']);
+  assert.deepEqual(snap.acertosIndividuais.map((a) => a.quem), ['FELIPE', 'RAMON']);
 });
 
 test('escala publicada pelo Apps Script (aba EscalaApp)', () => {

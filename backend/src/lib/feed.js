@@ -1,7 +1,7 @@
 const { getCell, norm, toNumberLike } = require('./text');
 const { weekKey, spDateKey, tsToDate } = require('./time');
 
-const RESIDENTS = ['ALLAN', 'RAMON', 'VITOR', 'GUSTAVO', 'GUILHERME'];
+const RESIDENTS = ['ALLAN', 'RAMON', 'FELIPE', 'GUSTAVO', 'GUILHERME'];
 const RESIDENTS_NORM = RESIDENTS.map((r) => norm(r));
 
 function isResidentName(value) {
@@ -52,7 +52,7 @@ function defaultScale() {
   return [
     { nome: 'ALLAN', tarefa: 'Quintal + Coelha Nilde' },
     { nome: 'RAMON', tarefa: 'Lavanderia e Panos' },
-    { nome: 'VITOR', tarefa: 'Lixo Diário' },
+    { nome: 'FELIPE', tarefa: 'Lixo Diário' },
     { nome: 'GUSTAVO', tarefa: 'Cozinha' },
     { nome: 'GUILHERME', tarefa: 'Sala, Corredor e Garagem' },
   ];

@@ -5,7 +5,7 @@ const c = require('../src/lib/ciclo');
 const escala = [
   { nome: 'ALLAN', tarefa: 'Cozinha' },
   { nome: 'RAMON', tarefa: 'Sala, Corredor e Garagem', extra: 'BANHEIRÃO' },
-  { nome: 'VITOR', tarefa: 'Lixo' },
+  { nome: 'FELIPE', tarefa: 'Lixo' },
   { nome: 'GUSTAVO', tarefa: 'Quintal + Coelha Nilde 🐰' },
   { nome: 'GUILHERME', tarefa: 'Lavanderia e Panos' },
 ];
@@ -54,23 +54,23 @@ test('ciclo: avaliação abre com todos entregues e fecha quando todos avaliam',
   const s = c.buildCycleState({ key, now: at('2026-11-15T13:00:00-03:00'), escala, checks });
   assert.equal(s.phase, 'avaliacao');
   assert.equal(s.avaliacoes.esperadas, 5 * 4 + 2); // + banheirão do Ramon: só Allan e Gustavo avaliam
-  assert.equal(c.podeAvaliarBanheirao('VITOR'), false);
+  assert.equal(c.podeAvaliarBanheirao('FELIPE'), false);
   assert.equal(c.podeAvaliarBanheirao('gustavo'), true);
   const rows = [];
   escala.forEach((a) => escala.forEach((t) => {
     if (a.nome === t.nome) return;
-    rows.push([key, a.nome, t.nome, t.nome === 'VITOR' ? 2 : 5, t.tarefa, 'ok', '', 'casa']);
+    rows.push([key, a.nome, t.nome, t.nome === 'FELIPE' ? 2 : 5, t.tarefa, 'ok', '', 'casa']);
     if (t.extra && ['ALLAN', 'GUSTAVO'].includes(a.nome)) rows.push([key, a.nome, t.nome, 4, t.tarefa, '', '', 'banheirao']);
   }));
   const s2 = c.buildCycleState({ key, now: at('2026-11-16T13:00:00-03:00'), escala, checks, ratingRows: rows });
   assert.equal(s2.phase, 'encerrada');
   const res = c.cycleResults(s2, c.rulesFromConfig({}));
-  const vitor = res.find((r) => r.nome === 'VITOR');
-  assert.equal(vitor.media, 2);
-  assert.equal(vitor.multa, 0); // média baixa: pendente até o admin confirmar
-  assert.equal(vitor.multaPendente, 60);
-  assert.match(vitor.motivoPendente, /média 2,0/);
-  assert.equal(c.cycleResults(s2, c.rulesFromConfig({ avaliacaoMultaMediaAuto: 'sim' })).find((r) => r.nome === 'VITOR').multa, 60);
+  const felipe = res.find((r) => r.nome === 'FELIPE');
+  assert.equal(felipe.media, 2);
+  assert.equal(felipe.multa, 0); // média baixa: pendente até o admin confirmar
+  assert.equal(felipe.multaPendente, 60);
+  assert.match(felipe.motivoPendente, /média 2,0/);
+  assert.equal(c.cycleResults(s2, c.rulesFromConfig({ avaliacaoMultaMediaAuto: 'sim' })).find((r) => r.nome === 'FELIPE').multa, 60);
   assert.equal(res.find((r) => r.nome === 'RAMON').mediaBanheirao, 4);
   assert.equal(res.find((r) => r.nome === 'ALLAN').multa, 0);
 });
@@ -80,11 +80,11 @@ test('ciclo: tolerância acaba → abre sem quem não entregou e gera multa', ()
   const checks = { ALLAN: { ts: '2026-11-15T10:00:00-03:00' }, RAMON: { ts: '2026-11-18T23:00:00-03:00' } };
   const s = c.buildCycleState({ key, now: at('2026-11-19T00:30:00-03:00'), escala, checks });
   assert.equal(s.phase, 'avaliacao');
-  assert.equal(s.residents.find((r) => r.nome === 'VITOR').status, 'nao_entregue');
+  assert.equal(s.residents.find((r) => r.nome === 'FELIPE').status, 'nao_entregue');
   assert.equal(s.residents.find((r) => r.nome === 'RAMON').atrasoDias, 3);
   const res = c.cycleResults(s, c.rulesFromConfig({ avaliacaoMultaAuto: 'sim' }));
-  assert.equal(res.find((r) => r.nome === 'VITOR').multa, 60);
-  assert.equal(c.cycleResults(s, c.rulesFromConfig({ avaliacaoMultaAuto: 'não' })).find((r) => r.nome === 'VITOR').multa, 0);
+  assert.equal(res.find((r) => r.nome === 'FELIPE').multa, 60);
+  assert.equal(c.cycleResults(s, c.rulesFromConfig({ avaliacaoMultaAuto: 'não' })).find((r) => r.nome === 'FELIPE').multa, 0);
   const late = c.buildCycleState({ key, now: at('2026-11-23T01:00:00-03:00'), escala, checks });
   assert.equal(late.phase, 'encerrada');
 });
@@ -93,16 +93,16 @@ test('desempenho: linhas, ranking e sequência no prazo', () => {
   const rows = [c.DESEMPENHO_HEADER,
     ['2026-W45', 'ALLAN', 'Cozinha', 'SIM', '', '0', '4,5', '4', '', '0', '', ''],
     ['2026-W44', 'ALLAN', 'Sala', 'SIM', '', '0', '5', '4', '', '0', '', ''],
-    ['2026-W45', 'VITOR', 'Lixo', 'NÃO', '', '3', '', '0', '', '60', 'não entregou', ''],
-    ['2026-W44', 'VITOR', 'Cozinha', 'SIM', '', '2', '3,5', '4', '', '0', '', '']];
+    ['2026-W45', 'FELIPE', 'Lixo', 'NÃO', '', '3', '', '0', '', '60', 'não entregou', ''],
+    ['2026-W44', 'FELIPE', 'Cozinha', 'SIM', '', '2', '3,5', '4', '', '0', '', '']];
   const recs = c.parseDesempenhoRows(rows);
   assert.equal(recs.length, 4);
-  const d = c.computeDesempenho(recs, ['ALLAN', 'VITOR', 'RAMON']);
+  const d = c.computeDesempenho(recs, ['ALLAN', 'FELIPE', 'RAMON']);
   const allan = d.stats.find((s) => s.nome === 'ALLAN');
   assert.equal(allan.media, 4.75);
   assert.equal(allan.sequenciaNoPrazo, 2);
   assert.equal(d.ranking[0].nome, 'ALLAN');
-  assert.equal(d.stats.find((s) => s.nome === 'VITOR').multasTotal, 60);
+  assert.equal(d.stats.find((s) => s.nome === 'FELIPE').multasTotal, 60);
   assert.equal(d.destaqueUltimaSemana.nome, 'ALLAN');
   assert.equal(c.resultToRow({ ciclo: 'x', nome: 'A', tarefa: 't', entregou: true, entregueEm: '', atrasoDias: 0, media: 4.5, nAvaliacoes: 4, mediaBanheirao: null, multa: 0, motivo: '' }, 'f')[6], '4,5');
 });
@@ -123,7 +123,7 @@ test('ajustes do admin: prazo, tolerância, dispensa, abono, tarefa e fechar', (
   const key = '2026-W46';
   const aj = (morador, tipo, valor, em = '2026-11-14T10:00:00Z') => [`${tipo}-${morador}-${em}`, key, morador, tipo, valor, 'teste', 'GUILHERME', em, 'SIM'];
   const ajustes = c.parseAjustes([c.AJUSTES_HEADER,
-    aj('VITOR', 'prazo', '2026-11-17T23:59:00-03:00'),
+    aj('FELIPE', 'prazo', '2026-11-17T23:59:00-03:00'),
     aj('GUSTAVO', 'dispensa', '1'),
     aj('RAMON', 'abono', '1'),
     aj('ALLAN', 'tarefa', 'Garagem'),
@@ -132,7 +132,7 @@ test('ajustes do admin: prazo, tolerância, dispensa, abono, tarefa e fechar', (
   const checks = { RAMON: { ts: '2026-11-17T10:00:00-03:00' }, GUILHERME: { ts: '2026-11-15T10:00:00-03:00' } };
   const s = c.buildCycleState({ key, now: at('2026-11-17T12:00:00-03:00'), escala, checks, ajustes });
   const by = Object.fromEntries(s.residents.map((r) => [r.nome, r]));
-  assert.equal(by.VITOR.status, 'no_prazo');
+  assert.equal(by.FELIPE.status, 'no_prazo');
   assert.equal(by.GUSTAVO.status, 'dispensado');
   assert.equal(by.RAMON.atrasoDias, 0);
   assert.equal(by.ALLAN.tarefa, 'Garagem');
@@ -157,7 +157,7 @@ test('ajustes do admin: prazo, tolerância, dispensa, abono, tarefa e fechar', (
 test('notas ao vivo escondem média com poucas notas e fuso automático', () => {
   const key = '2026-W46';
   const checks = Object.fromEntries(escala.map((e) => [e.nome, { ts: '2026-11-15T12:00:00-03:00' }]));
-  const rows = [[key, 'ALLAN', 'RAMON', 4, '', '', '', 'casa'], [key, 'ALLAN', 'RAMON', 5, '', '', '', 'banheirao'], [key, 'VITOR', 'ALLAN', 5, '', '', '', 'casa'], [key, 'RAMON', 'ALLAN', 3, '', '', '', 'casa']];
+  const rows = [[key, 'ALLAN', 'RAMON', 4, '', '', '', 'casa'], [key, 'ALLAN', 'RAMON', 5, '', '', '', 'banheirao'], [key, 'FELIPE', 'ALLAN', 5, '', '', '', 'casa'], [key, 'RAMON', 'ALLAN', 3, '', '', '', 'casa']];
   const s = c.buildCycleState({ key, now: at('2026-11-15T13:00:00-03:00'), escala, checks, ratingRows: rows });
   const v = Object.fromEntries(c.notasAoVivo(s).map((n) => [n.nome, n]));
   assert.equal(v.RAMON.media, null);

@@ -3,7 +3,7 @@
 ## O que é
 
 **Tocah** é o app interno da **República Tocah do Coelho**, uma casa compartilhada por 5 moradores:
-`ALLAN`, `RAMON`, `VITOR`, `GUSTAVO`, `GUILHERME`.
+`ALLAN`, `RAMON`, `FELIPE`, `GUSTAVO`, `GUILHERME`.
 
 O app centraliza a vida da casa em 5 abas:
 

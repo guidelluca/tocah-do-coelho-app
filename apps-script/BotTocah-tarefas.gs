@@ -202,7 +202,7 @@ function getListaMoradores() {
     { nome: 'RAMON', email: 'ramondominguess01@gmail.com', tel: '5531994335366' },
     { nome: 'GUSTAVO', email: 'gustavolucena2015@gmail.com', tel: '5582996959438' },
     { nome: 'GUILHERME', email: 'guilhermedeluca75@gmail.com', tel: '5512988931752' },
-    { nome: 'VITOR', email: 'vitor.stolf2020@gmail.com', tel: '5519988501981' },
+    { nome: 'FELIPE', email: 'flpiresa@gmail.com', tel: '' },
   ];
 }
 
@@ -244,7 +244,7 @@ function getTarefasBase() {
   ];
 }
 
-function getTarefaVitor() {
+function getTarefaFelipe() {
   return {
     area: 'LIXO',
     prazo: 'DIÁRIO',
@@ -262,8 +262,8 @@ function getAtribuicoesSemana(offsetSemana) {
 
   moradores.forEach(function (morador, i) {
     var tarefa;
-    if (morador.nome === 'VITOR') {
-      tarefa = getTarefaVitor();
+    if (morador.nome === 'FELIPE') {
+      tarefa = getTarefaFelipe();
     } else {
       const indice = (i + semanaAno) % tarefas.length;
       tarefa = Object.assign({}, tarefas[indice]);
@@ -460,8 +460,8 @@ function enviarIndividual_GUSTAVO() {
 function enviarIndividual_GUILHERME() {
   executarEnvioIndividual(false, 'GUILHERME');
 }
-function enviarIndividual_VITOR() {
-  executarEnvioIndividual(false, 'VITOR');
+function enviarIndividual_FELIPE() {
+  executarEnvioIndividual(false, 'FELIPE');
 }
 
 function configurarEnvioAutomaticoSegunda() {

@@ -12,7 +12,7 @@ import { AppText, Avatar, BottomSheet, Button, Card, Chip, Divider, EmptyState, 
 
 const TOKEN_KEY = '@tocah_admin_token';
 export const ADMIN = 'GUILHERME';
-const RESIDENTES = ['ALLAN', 'RAMON', 'VITOR', 'GUSTAVO', 'GUILHERME'];
+const RESIDENTES = ['ALLAN', 'RAMON', 'FELIPE', 'GUSTAVO', 'GUILHERME'];
 const DAY = 24 * 60 * 60 * 1000;
 const TZ = 'America/Sao_Paulo';
 
