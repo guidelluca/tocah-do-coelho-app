@@ -2352,7 +2352,7 @@ function safePendentesSemanaPassada_() {
 }
 
 /* =====================================================================
- * E-MAIL "COMO FUNCIONAM AS TAREFAS" · apresentação do rodízio, prazos, foto, avaliação e multa
+ * E-MAIL "COMO FUNCIONAM AS TAREFAS" · apresentação do rodízio, prazos, foto e multa
  * Menu: Bot Tarefas → Como funcionam as tarefas (e-mail)
  *  - Prévia: só para o admin (com faixa amarela de teste)
  *  - Enviar para todos: cada morador recebe a sua versão (com a tarefa e a sequência dele)
@@ -2453,12 +2453,8 @@ function resumoTarefa_(area) {
 function montarHtmlApresentacaoTarefas_(morador, ehTeste) {
   var C = TOCAH_COR;
   var ff = htmlEmailFontStack();
-  var INFO = { bg: '#E5EDFC', fg: '#1D47AB' };
   var nome = nomeCurto_(morador.nome);
   var multa = multaValor_();
-  var mediaMin = configValor_('avaliacaoMediaMinima', '3').replace('.', ',');
-  var minAval = configValor_('avaliacaoMinAvaliacoes', '3');
-  var mediaAuto = ['SIM', 'TRUE', '1', 'ON', 'LIGADO'].indexOf(normNome_(configValor_('avaliacaoMultaMediaAuto', 'não'))) !== -1;
   var b = function (t) { return '<b style="font-weight:800;color:' + C.text + ';">' + t + '</b>'; };
   var tarefas = getTarefasBase();
 
@@ -2517,7 +2513,6 @@ function montarHtmlApresentacaoTarefas_(morador, ehTeste) {
       '<div style="margin-top:14px;">' +
       htmlEmailPill_('🔄 Troca toda segunda', C.primarySoft, C.onPrimarySoft) +
       htmlEmailPill_('📸 Entrega com foto no app', C.successSoft, C.onSuccessSoft) +
-      htmlEmailPill_('⭐ Nota de 1 a 5', C.warningSoft, C.onWarningSoft) +
       htmlEmailPill_('💸 Multa de R$ ' + multa, C.dangerSoft, C.onDangerSoft) + '</div>');
 
   // ===== Sua tarefa agora =====
@@ -2562,11 +2557,9 @@ function montarHtmlApresentacaoTarefas_(morador, ehTeste) {
       etapa_('DOM', '23h59', verde, 'Prazo da foto no app',
           'Mande a foto da tarefa feita até domingo 23h59 (' + b('Lavanderia e Panos: segunda 23h59') + '). Antes disso chegam avisos: 2 dias antes, na véspera e no dia (9h, 18h e 22h).') +
       etapa_('SEG–QUA', 'Atraso', amarelo, 'Ainda dá, mas conta atraso',
-          'Dá pra entregar atrasado até ' + b('quarta 23h59') + '. Cada dia de atraso fica registrado no seu desempenho, e chega um lembrete por dia.') +
+          'Dá pra entregar atrasado até ' + b('quarta 23h59') + '. Cada dia de atraso fica registrado, e chega um lembrete por dia.') +
       etapa_('QUA', '23h59', vermelho, 'Multa automática',
-          'Quem não mandou a foto até quarta 23h59 leva ' + b('multa de R$ ' + multa) + ' na Caixinha, sem ninguém precisar cobrar.') +
-      etapa_('DEPOIS', '⭐', { bg: INFO.bg, fg: INFO.fg }, 'Avaliação anônima',
-          'Quando todo mundo entrega (ou o prazo de atraso acaba), abre a avaliação: cada um dá nota de 1 a 5 pras tarefas dos outros, pelo app ou pelo e-mail. Fecha no domingo seguinte; lembrete às 19h pra quem falta.', true) +
+          'Quem não mandou a foto até quarta 23h59 leva ' + b('multa de R$ ' + multa) + ' na Caixinha, sem ninguém precisar cobrar.', true) +
       '</table>');
 
   // ===== As tarefas =====
@@ -2587,17 +2580,15 @@ function montarHtmlApresentacaoTarefas_(morador, ehTeste) {
       titulo_('No app', 'Como entregar a tarefa') +
       passos_([
         ['Abra o app e vá em Tarefas', 'Sua tarefa da semana fica em destaque, com prazo e o que fazer.'],
-        ['Crie seu PIN (só na 1ª vez)', 'Assim ninguém manda foto ou dá nota no seu nome.'],
-        ['Toque em "Tirar foto da tarefa"', 'Pode mandar até 6 fotos. Antes e depois ajuda muito na avaliação.'],
+        ['Crie seu PIN (só na 1ª vez)', 'Assim ninguém manda foto no seu nome.'],
+        ['Toque em "Tirar foto da tarefa"', 'Pode mandar até 6 fotos. Mostre a tarefa pronta (antes e depois ajuda).'],
         ['Confira e envie de uma vez', 'Só dá pra enviar uma vez por semana: mande quando terminar tudo.'],
       ]));
 
   // ===== Multa =====
   var regrasMulta = passos_([
     ['Não entregou até quarta 23h59', 'Multa de ' + b('R$ ' + multa) + ' lançada sozinha na Caixinha.'],
-    ['Nota média abaixo de ' + mediaMin, 'Com pelo menos ' + minAval + ' notas, a tarefa conta como mal feita. ' +
-        (mediaAuto ? 'A multa de R$ ' + multa + ' entra automaticamente.' : 'A multa de R$ ' + multa + ' fica pendente e só vale se o admin confirmar (pra ninguém "combinar" nota baixa).')],
-    ['Entregou com atraso (até quarta)', 'Não tem multa, mas os dias de atraso ficam no seu desempenho e no ranking.'],
+    ['Entregou com atraso (até quarta)', 'Não tem multa, mas os dias de atraso ficam registrados.'],
   ]);
   var cardMulta = htmlEmailCard_(
       titulo_('Multa', 'Quanto, quando e por quê') +
@@ -2627,8 +2618,8 @@ function montarHtmlApresentacaoTarefas_(morador, ehTeste) {
 
   var periodo = getPeriodoValidade(0);
   return (
-      htmlEmailDocOpen('Rodízio de todas as tarefas, prazos, foto no app, avaliação e multa: tudo o que você precisa saber.') +
-      htmlEmailHeroRoxo('Oi, ' + nome + '! Como funcionam as tarefas', '🔄 Rodízio · 📸 foto no app · ⭐ avaliação · 💸 multa', true, 'Tarefas da casa') +
+      htmlEmailDocOpen('Rodízio de todas as tarefas, prazos, foto no app e multa: tudo o que você precisa saber.') +
+      htmlEmailHeroRoxo('Oi, ' + nome + '! Como funcionam as tarefas', '🔄 Rodízio · 📸 foto no app · 💸 multa', true, 'Tarefas da casa') +
       htmlEmailCorpoAbre() +
       banner +
       linha_(htmlEmailChipPeriodo(periodo) +

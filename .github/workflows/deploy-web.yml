@@ -36,7 +36,7 @@ jobs:
           EXPO_PUBLIC_APP_VERSION: ${{ github.sha }}
         run: npm run build:web
 
-      - name: Copy static pages (ex.: /tarefas — descritivo das tarefas)
+      - name: Copy static pages (descritivo das tarefas em /tarefas)
         run: cp -R static/. dist/
 
       - name: Write version.json (aviso de versão nova no app)
