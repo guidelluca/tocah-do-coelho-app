@@ -71,7 +71,10 @@ function abrirMenuBotTarefas() {
       .addItem('Desligar atualização da escala no app', 'removerGatilhoEscalaApp')
       .addSeparator()
       .addItem('Ligar lembrete de domingo (18h)', 'configurarLembreteDomingo')
-      .addItem('Desligar lembrete de domingo', 'removerLembreteDomingo');
+      .addItem('Desligar lembrete de domingo', 'removerLembreteDomingo')
+      .addSeparator()
+      .addItem('Ligar lembrete da máquina de lavar (todo dia 8h)', 'ligarLembretesMaquina')
+      .addItem('Desligar lembrete da máquina de lavar', 'desligarLembretesMaquina');
 
   var paineis = ui.createMenu('Painéis')
       .addItem('Painel de ferramentas (barra lateral)', 'mostrarSidebarTarefas')
@@ -79,7 +82,7 @@ function abrirMenuBotTarefas() {
       .addItem('Status da semana (quem já entregou)', 'mostrarStatusDaSemana')
       .addItem('Plano de notificações', 'mostrarPainelNotificacoes');
 
-  var maquina = ui.createMenu('Máquina de lavar')
+  var maquina = ui.createMenu('Escala da máquina de lavar')
       .addItem('Ver escala da máquina', 'mostrarEscalaMaquina')
       .addItem('Mandar o lembrete de hoje agora', 'lembreteMaquinaHojeManual')
       .addItem('Teste: mandar o lembrete de hoje só para mim', 'testeLembreteMaquina')
@@ -96,6 +99,7 @@ function abrirMenuBotTarefas() {
       .addSubMenu(apresentacao)
       .addSubMenu(banheirao)
       .addSubMenu(cobrancas)
+      .addSubMenu(maquina)
       .addSeparator()
       .addItem('Ligar tudo automático', 'ligarTudoAutomatico')
       .addItem('Desligar tudo automático', 'desligarTudoAutomatico')
@@ -103,7 +107,6 @@ function abrirMenuBotTarefas() {
       .addSubMenu(umaAUma)
       .addSeparator()
       .addSubMenu(paineis)
-      .addSubMenu(maquina)
       .addSubMenu(rodizio)
       .addSeparator()
       .addItem('Atualizar escala no app agora', 'publicarEscalaParaAppComAviso')
