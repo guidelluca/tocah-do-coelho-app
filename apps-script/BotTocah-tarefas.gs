@@ -84,7 +84,7 @@ function abrirMenuBotTarefas() {
       .addItem('Mandar o lembrete de hoje agora', 'lembreteMaquinaHojeManual')
       .addItem('Teste: mandar o lembrete de hoje só para mim', 'testeLembreteMaquina')
       .addSeparator()
-      .addItem('Ligar lembretes da máquina (véspera 20h e no dia 8h)', 'ligarLembretesMaquina')
+      .addItem('Ligar lembrete da máquina (todo dia 8h)', 'ligarLembretesMaquina')
       .addItem('Desligar lembretes da máquina', 'desligarLembretesMaquina');
 
   var rodizio = ui.createMenu('Rodízio')
@@ -1995,8 +1995,7 @@ var AUTOMACOES_TOCAH_ = [
   { fn: 'tickAvaliacaoTocah', nome: 'Cobrança de entrega e de avaliação', quando: 'a cada 10 min, das 7h à meia-noite' },
   { fn: 'publicarEscalaParaApp', nome: 'Escala no app', quando: 'segunda 1h e todo dia 7h' },
   { fn: 'lembreteDomingoPendentes', nome: 'Lembrete de domingo', quando: 'domingo 18h' },
-  { fn: 'lembreteMaquinaAmanha', nome: 'Máquina de lavar: aviso da véspera', quando: 'todo dia 20h' },
-  { fn: 'lembreteMaquinaHoje', nome: 'Máquina de lavar: aviso do dia', quando: 'todo dia 8h' },
+  { fn: 'lembreteMaquinaHoje', nome: 'Máquina de lavar: aviso de quem lava', quando: 'todo dia 8h' },
 ];
 
 function apagarGatilhos_(fn) {
@@ -2027,7 +2026,6 @@ function ligarTudoAutomatico() {
   apagarGatilhos_('lembreteMaquinaHoje');
   apagarGatilhos_('lembreteMaquinaAmanha');
   ScriptApp.newTrigger('lembreteMaquinaHoje').timeBased().everyDays(1).atHour(8).inTimezone(tz).create();
-  ScriptApp.newTrigger('lembreteMaquinaAmanha').timeBased().everyDays(1).atHour(20).inTimezone(tz).create();
   // O lembrete de domingo fica de fora: a cobrança automática já avisa domingo 9h, 18h e 22h.
   try { publicarEscalaParaApp(); } catch (e) {}
   try { tickAvaliacaoTocah(); } catch (e) {}
@@ -2037,7 +2035,7 @@ function ligarTudoAutomatico() {
       '• Lembretes diários: todo dia 8h\n' +
       '• Cobrança de entrega e de avaliação: a cada 10 min (das 7h à meia-noite), só para quem ainda deve\n' +
       '• Escala no app: segunda 1h e todo dia 7h\n' +
-      '• Máquina de lavar: aviso na véspera 20h e no dia 8h, só para quem é a vez\n\n' +
+      '• Máquina de lavar: e-mail às 8h para quem lava no dia\n\n' +
       'Não precisa fazer mais nada: segue rodando toda semana.');
 }
 
@@ -2710,7 +2708,7 @@ function montarHtmlApresentacaoTarefas_(morador, ehTeste) {
 
 
 /* =====================================================================
- * MÁQUINA DE LAVAR · avisa quem é a vez (véspera 20h e no dia 8h)
+ * MÁQUINA DE LAVAR · e-mail às 8h para quem lava no dia
  * Escala de segunda a domingo. Pode trocar na aba Config, chave "escalaMaquina":
  *   PANOS,GUILHERME,,FELIPE,GUSTAVO,RAMON,ALLAN   (vazio = dia livre)
  * "PANOS" vai para quem está com Lavanderia e Panos naquela semana.
@@ -2763,77 +2761,133 @@ function segundaDaData_(data) {
   return meioDia.getTime() - diaMaquina_(data) * 86400000 - 12 * 3600000;
 }
 
-function htmlEscalaMaquina_(escala, destaque) {
-  var linhas = escala.map(function (nome, i) {
-    var ativo = i === destaque;
-    var rotulo = !nome ? 'Livre' : nome === 'PANOS' ? 'Panos da casa' : nomeCurto_(nome);
-    return '<tr>' +
-        '<td style="padding:8px 12px;border-radius:12px 0 0 12px;' + (ativo ? 'background-color:' + TOCAH_COR.primarySoft + ';' : '') +
-        'font-size:13px;font-weight:800;color:' + (ativo ? TOCAH_COR.onPrimarySoft : TOCAH_COR.textMuted) + ';width:84px;">' +
-        DIAS_MAQUINA[i].charAt(0).toUpperCase() + DIAS_MAQUINA[i].slice(1) + '</td>' +
-        '<td style="padding:8px 12px;border-radius:0 12px 12px 0;' + (ativo ? 'background-color:' + TOCAH_COR.primarySoft + ';' : '') +
-        'font-size:14px;font-weight:' + (ativo ? '900' : '700') + ';color:' + (ativo ? TOCAH_COR.onPrimarySoft : nome ? TOCAH_COR.text : TOCAH_COR.textMuted) + ';">' +
-        rotulo + '</td></tr>';
+/** Faixa da semana: 7 bolinhas (Seg…Dom) com a inicial de quem lava; hoje em roxo. */
+function htmlSemanaMaquina_(escala, destaque) {
+  var ff = htmlEmailFontStack();
+  var curtos = ['SEG', 'TER', 'QUA', 'QUI', 'SEX', 'SÁB', 'DOM'];
+  var cels = escala.map(function (nome, i) {
+    var hoje = i === destaque;
+    var c = !nome ? { bg: TOCAH_COR.surfaceAlt, fg: TOCAH_COR.textSubtle } : nome === 'PANOS' ? { bg: '#E0F0FD', fg: '#0B4A75' } : corAvatar_(nome);
+    var bolinha = hoje ? { bg: TOCAH_COR.primary, fg: '#FFFFFF' } : c;
+    var ini = !nome ? '–' : nome === 'PANOS' ? '🧽' : nome.charAt(0);
+    var rot = !nome ? 'livre' : nome === 'PANOS' ? 'panos' : nomeCurto_(nome);
+    return '<td align="center" valign="top" width="14%" style="padding:10px 0 12px;border-radius:16px;' +
+        (hoje ? 'background-color:' + TOCAH_COR.primarySoft + ';' : '') + '">' +
+        '<div style="font-family:' + ff + ';font-size:10px;font-weight:900;letter-spacing:0.08em;color:' + (hoje ? TOCAH_COR.onPrimarySoft : TOCAH_COR.textSubtle) + ';">' + curtos[i] + '</div>' +
+        '<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:6px auto 0;border-collapse:separate;"><tr>' +
+        '<td width="34" height="34" align="center" valign="middle" style="width:34px;height:34px;border-radius:50%;background-color:' + bolinha.bg + ';color:' + bolinha.fg +
+        ';font-family:' + ff + ';font-size:14px;font-weight:900;line-height:34px;text-align:center;">' + ini + '</td></tr></table>' +
+        '<div style="margin-top:5px;font-family:' + ff + ';font-size:10px;font-weight:' + (hoje ? '900' : '700') + ';color:' + (hoje ? TOCAH_COR.onPrimarySoft : TOCAH_COR.textMuted) + ';">' + rot + '</div>' +
+        '</td>';
   }).join('');
-  return '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:separate;">' + linhas + '</table>';
+  return '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:separate;table-layout:fixed;"><tr>' + cels + '</tr></table>';
 }
 
-function montarHtmlMaquina_(q, quando) {
+function htmlDicaMaquina_(icone, titulo, texto) {
+  var ff = htmlEmailFontStack();
+  return '<tr><td valign="top" width="44" style="padding:0 12px 14px 0;">' +
+      '<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse:separate;"><tr>' +
+      '<td width="40" height="40" align="center" valign="middle" style="width:40px;height:40px;border-radius:14px;background-color:' + TOCAH_COR.primarySoft +
+      ';font-size:20px;line-height:40px;text-align:center;">' + icone + '</td></tr></table></td>' +
+      '<td valign="top" style="padding:0 0 14px;font-family:' + ff + ';">' +
+      '<div style="font-size:14px;font-weight:900;color:' + TOCAH_COR.text + ';">' + titulo + '</div>' +
+      '<div style="margin-top:2px;font-size:13px;font-weight:600;line-height:1.45;color:' + TOCAH_COR.textMuted + ';">' + texto + '</div>' +
+      '</td></tr>';
+}
+
+function montarHtmlMaquina_(q) {
+  var ff = htmlEmailFontStack();
   var nome = nomeCurto_(q.morador.nome);
   var diaTxt = DIAS_MAQUINA[q.dia];
-  var hoje = quando === 'hoje';
-  var titulo = hoje ? 'Hoje é seu dia da máquina' : 'Amanhã é seu dia da máquina';
-  var lead = q.panos ?
-      (hoje ? 'Hoje (' + diaTxt + ') a máquina é dos <b>panos da casa</b>. Como a tarefa <b>Lavanderia e Panos</b> está com você, é sua vez: panos de prato, de chão e toalhas da cozinha.' :
-              'Amanhã (' + diaTxt + ') a máquina é dos <b>panos da casa</b>. Como você está com <b>Lavanderia e Panos</b>, já separa os panos de prato, de chão e as toalhas da cozinha.') :
-      (hoje ? 'Hoje (' + diaTxt + ') a máquina é sua. Aproveita e lava suas roupas; tira tudo do varal antes do dia seguinte pra liberar pro próximo.' :
-              'Amanhã (' + diaTxt + ') a máquina é sua. Já separa a roupa pra lavar.');
+  var dataTxt = Utilities.formatDate(q.data, 'America/Sao_Paulo', 'dd/MM');
+  var proximo = '';
+  for (var k = 1; k <= 7 && !proximo; k++) {
+    var n = q.escala[(q.dia + k) % 7];
+    if (n) proximo = (k === 1 ? 'amanhã' : DIAS_MAQUINA[(q.dia + k) % 7]) + ' é ' + (n === 'PANOS' ? 'dia dos panos' : 'do ' + nomeCurto_(n));
+  }
+  var titulo = q.panos ? 'Hoje é dia de lavar os panos da casa' : 'Hoje é seu dia de lavar roupa';
+  var sub = q.panos ?
+      'A tarefa Lavanderia e Panos está com você, então a máquina hoje é sua.' :
+      'A máquina é toda sua hoje, ' + nome + '. Bom dia de roupa limpa!';
+
+  var hero =
+      '<tr><td style="padding:0 0 14px;">' +
+      '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:separate;border-radius:28px;' +
+      'background-color:' + TOCAH_COR.primary + ';background-image:linear-gradient(150deg,' + TOCAH_COR.primary + ' 0%,' + TOCAH_COR.primaryDark + ' 100%);">' +
+      '<tr><td align="center" style="padding:26px 22px 26px;font-family:' + ff + ';">' +
+      '<div style="font-size:11px;font-weight:800;letter-spacing:0.14em;text-transform:uppercase;color:rgba(255,255,255,0.78);">' +
+      'Máquina de lavar · ' + diaTxt + ', ' + dataTxt + '</div>' +
+      '<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:18px auto 16px;border-collapse:separate;"><tr>' +
+      '<td width="92" height="92" align="center" valign="middle" style="width:92px;height:92px;border-radius:50%;background-color:rgba(255,255,255,0.16);' +
+      'border:2px solid rgba(255,255,255,0.32);font-size:46px;line-height:92px;text-align:center;">' + (q.panos ? '🧽' : '🧺') + '</td></tr></table>' +
+      '<div style="font-size:24px;font-weight:900;line-height:1.2;color:#FFFFFF;">' + titulo + '</div>' +
+      '<div style="margin-top:8px;font-size:14px;font-weight:600;line-height:1.5;color:rgba(255,255,255,0.88);">' + sub + '</div>' +
+      '</td></tr></table></td></tr>\n';
+
+  var semana = htmlEmailCard_(
+      '<div style="font-size:11px;font-weight:800;letter-spacing:0.12em;text-transform:uppercase;color:' + TOCAH_COR.textSubtle + ';margin:0 0 10px;">Escala da máquina</div>' +
+      htmlSemanaMaquina_(q.escala, q.dia));
+
+  var dicas = q.panos ? [
+    ['🧽', 'Panos de prato e de chão separados', 'Pano de chão nunca junto com o de prato.'],
+    ['🔥', 'Água quente ajuda', 'Se der, use o ciclo mais quente para os panos de prato.'],
+    ['🧺', 'Libere a máquina e o varal', proximo ? 'Recolha tudo até amanhã cedo: ' + proximo + '.' : 'Recolha tudo até amanhã cedo.'],
+  ] : [
+    ['👕', 'Separe antes de lavar', 'Brancas de um lado, coloridas e escuras do outro.'],
+    ['⏰', 'Recolha até amanhã cedo', proximo ? 'Libere a máquina e o varal: ' + proximo + '.' : 'Libere a máquina e o varal pro próximo.'],
+    ['🚪', 'Deixe a tampa aberta no fim', 'Ajuda a máquina a secar e não pegar cheiro.'],
+  ];
+  var cardDicas = htmlEmailCard_(
+      '<div style="font-size:11px;font-weight:800;letter-spacing:0.12em;text-transform:uppercase;color:' + TOCAH_COR.textSubtle + ';margin:0 0 14px;">Pra deixar tudo certo</div>' +
+      '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">' +
+      dicas.map(function (d) { return htmlDicaMaquina_(d[0], d[1], d[2]); }).join('') + '</table>');
+
   return (
-      htmlEmailDocOpen(hoje ? 'Oi, ' + nome + ', hoje a máquina é sua.' : 'Oi, ' + nome + ', amanhã a máquina é sua.') +
-      htmlEmailHeroRoxo('Oi, ' + nome + '!', '🧺 ' + titulo, true, 'Máquina de lavar') +
+      htmlEmailDocOpen(titulo + ' · ' + (proximo ? proximo.charAt(0).toUpperCase() + proximo.slice(1) + '.' : '')) +
+      hero +
       htmlEmailCorpoAbre() +
-      '<tr><td>' + htmlEmailLead(lead) + '</td></tr>\n' +
-      '<tr><td>' + htmlEmailCard_(
-          '<div style="font-size:11px;font-weight:800;letter-spacing:0.12em;text-transform:uppercase;color:' + TOCAH_COR.textSubtle + ';margin-bottom:8px;">Escala da máquina</div>' +
-          htmlEscalaMaquina_(q.escala, q.dia)) + '</td></tr>\n' +
+      '<tr><td>' + semana + '</td></tr>\n' +
+      '<tr><td>' + cardDicas + '</td></tr>\n' +
       htmlEmailCorpoFecha() +
-      htmlEmailRodape('Aviso automático da máquina de lavar. A escala também aparece no app, no Início e em Tarefas. Precisa trocar de dia? Combina com alguém no grupo da casa.') +
+      htmlEmailRodape('Aviso automático da máquina de lavar, todo dia às 8h para quem é a vez. A escala também está no app. Precisa trocar de dia? Combina com alguém no grupo da casa.') +
       htmlEmailDocClose()
   );
 }
 
-/** quando: 'hoje' ou 'amanha'. opcoes.para = e-mail de teste; opcoes.forcar = ignora "já enviado". */
-function enviarLembreteMaquina_(quando, opcoes) {
+/** Aviso do dia (8h). opcoes.para = e-mail de teste; opcoes.forcar = ignora "já enviado". */
+function enviarLembreteMaquina_(opcoes) {
   opcoes = opcoes || {};
-  var alvo = new Date(Date.now() + (quando === 'amanha' ? 86400000 : 0));
-  var q = quemLavaNoDia_(alvo);
-  var ymd = Utilities.formatDate(alvo, 'America/Sao_Paulo', 'yyyy-MM-dd');
-  if (!q) return 'Dia livre (' + DIAS_MAQUINA[diaMaquina_(alvo)] + '): ninguém para avisar.';
+  var hoje = new Date();
+  var q = quemLavaNoDia_(hoje);
+  var ymd = Utilities.formatDate(hoje, 'America/Sao_Paulo', 'yyyy-MM-dd');
+  if (!q) return 'Hoje (' + DIAS_MAQUINA[diaMaquina_(hoje)] + ') a máquina está livre: ninguém para avisar.';
   var props = PropertiesService.getScriptProperties();
-  var chave = 'maq:' + ymd + ':' + quando;
-  if (!opcoes.para && !opcoes.forcar && props.getProperty(chave)) return 'Já avisado.';
+  var chave = 'maq:' + ymd;
+  if (!opcoes.para && !opcoes.forcar && props.getProperty(chave)) return 'Já avisado hoje.';
   enviarEmail_({
     to: opcoes.para || q.morador.email,
-    subject: (opcoes.para ? '[TESTE] ' : '') + (quando === 'hoje' ? '🧺 Hoje a máquina é sua' : '🧺 Amanhã a máquina é sua') + (q.panos ? ' (panos da casa)' : '') + ' · Tocah',
-    htmlBody: montarHtmlMaquina_(q, quando),
+    subject: (opcoes.para ? '[TESTE] ' : '') + (q.panos ? '🧽 Hoje é dia de lavar os panos da casa' : '🧺 Hoje é seu dia de lavar roupa') + ' · Tocah',
+    htmlBody: montarHtmlMaquina_(q),
   });
   if (!opcoes.para) {
     props.setProperty(chave, String(Date.now()));
-    registrarLog('Máquina de lavar', (quando === 'hoje' ? 'Aviso do dia' : 'Aviso da véspera') + ' para ' + q.morador.nome + (q.panos ? ' (panos)' : ''));
+    registrarLog('Máquina de lavar', 'Aviso para ' + q.morador.nome + (q.panos ? ' (panos)' : ''));
   }
-  return 'Enviado para ' + nomeCurto_(q.morador.nome) + (q.panos ? ' (panos da casa)' : '') + (opcoes.para ? ' — teste no seu e-mail' : '') + '.';
+  return 'Enviado para ' + nomeCurto_(q.morador.nome) + (q.panos ? ' (panos da casa)' : '') + (opcoes.para ? ' (teste no seu e-mail)' : '') + '.';
 }
 
-function lembreteMaquinaHoje() { enviarLembreteMaquina_('hoje'); }
-function lembreteMaquinaAmanha() { enviarLembreteMaquina_('amanha'); }
+function lembreteMaquinaHoje() { enviarLembreteMaquina_(); }
+
+/** Gatilho antigo da véspera: não manda mais nada (fica só para não dar erro se ainda estiver ligado). */
+function lembreteMaquinaAmanha() {}
 
 function lembreteMaquinaHojeManual() {
-  alertaSeguro_('Máquina de lavar\n\n' + enviarLembreteMaquina_('hoje', { forcar: true }));
+  alertaSeguro_('Máquina de lavar\n\n' + enviarLembreteMaquina_({ forcar: true }));
 }
 
 function testeLembreteMaquina() {
   var eu = Session.getActiveUser().getEmail() || emailDe_('GUILHERME');
-  alertaSeguro_('Máquina de lavar\n\n' + enviarLembreteMaquina_('hoje', { para: eu }));
+  alertaSeguro_('Máquina de lavar\n\n' + enviarLembreteMaquina_({ para: eu }));
 }
 
 function mostrarEscalaMaquina() {
@@ -2843,7 +2897,7 @@ function mostrarEscalaMaquina() {
     return (i === hoje ? '▶ ' : '   ') + DIAS_MAQUINA[i] + ': ' + (!n ? 'livre' : n === 'PANOS' ? 'panos da casa (quem está com Lavanderia e Panos)' : nomeCurto_(n));
   });
   var ativos = ScriptApp.getProjectTriggers().some(function (t) { return t.getHandlerFunction() === 'lembreteMaquinaHoje'; });
-  alertaSeguro_('Escala da máquina\n\n' + linhas.join('\n') + '\n\nLembretes automáticos: ' + (ativos ? 'ligados (véspera 20h e no dia 8h)' : 'desligados') +
+  alertaSeguro_('Escala da máquina\n\n' + linhas.join('\n') + '\n\nLembretes automáticos: ' + (ativos ? 'ligado (todo dia 8h)' : 'desligados') +
       '\nPara mudar: aba Config, chave escalaMaquina.');
 }
 
@@ -2852,8 +2906,7 @@ function ligarLembretesMaquina() {
   apagarGatilhos_('lembreteMaquinaHoje');
   apagarGatilhos_('lembreteMaquinaAmanha');
   ScriptApp.newTrigger('lembreteMaquinaHoje').timeBased().everyDays(1).atHour(8).inTimezone(tz).create();
-  ScriptApp.newTrigger('lembreteMaquinaAmanha').timeBased().everyDays(1).atHour(20).inTimezone(tz).create();
-  alertaSeguro_('✅ Lembretes da máquina ligados: quem é a vez recebe um e-mail na véspera às 20h e no dia às 8h. Dia livre não manda nada.');
+  alertaSeguro_('✅ Lembrete da máquina ligado: todo dia às 8h quem lava recebe um e-mail. Dia livre não manda nada.');
 }
 
 function desligarLembretesMaquina() {
