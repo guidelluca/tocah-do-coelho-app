@@ -4,6 +4,7 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import { Screen } from '../components/Screen';
 import { AvaliarTab, DeliveryCard, DesempenhoTab, EntregasCard, GaleriaEntrega, NotasAoVivoCard, PinAviso } from '../components/tasks';
 import { ADMIN, AdminTab } from '../components/admin';
+import { MaquinaCard } from '../components/MaquinaCard';
 import { sameName } from '../utils/text';
 import { AppText, BottomSheet, Card, Chip, Icon, SkeletonCard } from '../components/ui';
 import { useResident } from '../context/ResidentContext';
@@ -69,6 +70,7 @@ export function TasksScreen() {
           {emAvaliacao && <NotasAoVivoCard ciclo={emAvaliacao} />}
           {anteriorPendente && <EntregasCard ciclo={anteriorPendente} titulo={`Semana passada · ${anteriorPendente.periodo}`} me={resident} onPhoto={setPhotoList} />}
           {data?.atual && <EntregasCard ciclo={data.atual} titulo="Entregas desta semana" me={resident} onPhoto={setPhotoList} />}
+          <MaquinaCard />
           <Card onPress={() => navigation.navigate('Nilde')} variant="primary" accessibilityLabel="Abrir Nilde">
             <View style={[styles.row, { gap: spacing.md }]}>
               <Icon name="rabbit" size={28} color="onPrimarySoft" />

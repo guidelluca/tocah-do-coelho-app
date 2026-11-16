@@ -5,6 +5,7 @@ import { Screen } from '../components/Screen';
 import { RentDetailSheet } from '../components/RentDetailSheet';
 import { CaixinhaSheet } from '../components/CaixinhaSheet';
 import { MyTaskCard } from '../components/MyTaskCard';
+import { MaquinaCard } from '../components/MaquinaCard';
 import { AvaliacaoBanner } from '../components/tasks';
 import { RemoteImage, HOUSE_SOURCES } from '../components/RemoteImage';
 import { AppText, Avatar, BottomSheet, Card, Divider, Icon, IconButton, ListRow, MoneyText, PressableScale, SectionHeader, SkeletonCard, StatusPill } from '../components/ui';
@@ -106,6 +107,7 @@ export function HomeScreen() {
       {/* SUA TAREFA */}
       <AvaliacaoBanner onPress={() => navigation.navigate('Tarefas', { tab: 'avaliar', at: Date.now() })} />
       <MyTaskCard />
+      <MaquinaCard compact onPress={() => navigation.navigate('Tarefas', { tab: 'semana', at: Date.now() })} />
 
       {/* CAIXINHA (faixa verde, como antes) */}
       <Card variant="success" onPress={() => setCaixinhaOpen(true)} accessibilityLabel="Abrir caixinha" style={{ marginBottom: spacing.md }}>
